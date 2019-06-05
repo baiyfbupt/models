@@ -1,3 +1,4 @@
 data
 train.sh
 output
+*.log

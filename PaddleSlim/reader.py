@@ -108,14 +108,10 @@ def distort_color(img):
 
 def process_image(sample, mode, color_jitter, rotate):
     img_path = sample[0]
-
-    #pix = img.load()
-    #print(pix[1][1][1])
-
     img = Image.open(img_path)
-    npimg = np.array(img)
-    print("image_size:", npimg.shape)
-    #img = crop_image(img, target_size=DATA_DIM, center=True)
+    #npimg = np.array(img)
+    #print("image_size:", npimg.shape)
+    img = crop_image(img, target_size=DATA_DIM, center=True)
     #print("cropped image shape:", img.shape)
     #print("cropped image:", img)
 
@@ -128,11 +124,11 @@ def process_image(sample, mode, color_jitter, rotate):
     #else:
     #    img = resize_short(img, target_size=256)
     #    img = crop_image(img, target_size=DATA_DIM, center=True)
-    #if mode == 'train':
+    if mode == 'train':
     #    if color_jitter:
     #        img = distort_color(img)
-    #    if np.random.randint(0, 2) == 1:
-    #        img = img.transpose(Image.FLIP_LEFT_RIGHT)
+        if np.random.randint(0, 2) == 1:
+            img = img.transpose(Image.FLIP_LEFT_RIGHT)
 
     #if img.mode != 'RGB':
     #    img = img.convert('RGB')
@@ -140,12 +136,12 @@ def process_image(sample, mode, color_jitter, rotate):
     #img = np.array(img).astype('float32').transpose((2, 0, 1)) / 255
     #img = np.array(img).astype('float32') / 255
     img = np.array(img).astype('float32').transpose((2, 0, 1)) / 255
-    print("post-scale image:", img)
+    #print("post-scale image:", img)
     img -= img_mean
-    print("post-sub image:", img)
+    #print("post-sub image:", img)
     img /= img_std
-    print("Post-norm image:", img)
-    print("image shape:", img.shape)
+    #print("Post-norm image:", img)
+    #print("image shape:", img.shape)
 
     if mode == 'train' or mode == 'val':
         return img, sample[1]

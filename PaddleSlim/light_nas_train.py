@@ -21,6 +21,8 @@ from utils.learning_rate import cosine_decay
 from utils.learning_rate import cosine_decay_with_warmup
 from utils.fp16_utils import create_master_params_grads, master_param_to_train_param
 from utility import add_arguments, print_arguments
+from paddle.fluid.layers.learning_rate_scheduler import _decay_step_counter
+
 
 IMAGENET1000 = 1281167
 parser = argparse.ArgumentParser(description=__doc__)
@@ -29,15 +31,15 @@ add_arg('bottleneck_params_list', str, '[1,16,1,1,3,1,0,3,24,3,2,3,1,0,3,40,3,2,
 add_arg('batch_size', int, 1, "Minibatch size.")
 add_arg('use_gpu', bool, True, "Whether to use GPU or not.")
 add_arg('total_images', int, 1, "Training image number.")
-add_arg('num_epochs', int, 2, "number of epochs.")
+add_arg('num_epochs', int, 50, "number of epochs.")
 add_arg('class_dim', int, 1000, "Class number.")
-add_arg('image_shape', str, "3,250,250", "input image size")
+add_arg('image_shape', str, "3,224,224", "input image size")
 add_arg('model_save_dir', str, "output", "model save directory")
 add_arg('with_mem_opt', bool, True,
         "Whether to use memory optimization or not.")
 add_arg('pretrained_model', str, None, "Whether to use pretrained model.")
 add_arg('checkpoint', str, None, "Whether to resume checkpoint.")
-add_arg('lr', float, 0.0, "set learning rate.")
+add_arg('lr', float, 0.1, "set learning rate.")
 add_arg('lr_strategy', str, "exponential_decay",
         "Set the learning rate decay strategy.")
 add_arg('model', str, "LightNASNet", "Set the network to use.")
@@ -45,8 +47,9 @@ add_arg('enable_ce', bool, False,
         "If set True, enable continuous evaluation job.")
 add_arg('data_dir', str, "/home/paddle/baiyifan/data/one_img/train", "The ImageNet dataset root dir.")
 add_arg('fp16', bool, False, "Enable half precision training with fp16.")
+add_arg('dropout_rate', float, 0.2, "dropout rate.")
 add_arg('scale_loss', float, 1.0, "Scale loss for fp16.")
-add_arg('l2_decay', float, 4e-5, "L2_decay parameter.")
+add_arg('l2_decay', float, 1e-5, "L2_decay parameter.")
 add_arg('momentum_rate', float, 0.9, "momentum_rate.")
 add_arg('use_ngraph', bool, False, "Whether to use NGraph engine or not.")
 
@@ -130,13 +133,24 @@ def optimizer_setting(params):
         batch_size = ls["batch_size"]
         num_epochs = params["num_epochs"]
         start_lr = params["lr"]
-        total_step = int((total_images / batch_size) * num_epochs)
-        decay_step = int((total_images / batch_size) * 2.4)
-        lr = start_lr
-        #lr = fluid.layers.exponential_decay(
-        #    learning_rate=start_lr, decay_steps=decay_step, decay_rate=0.97, staircase=True)
-        optimizer = fluid.optimizer.SGDOptimizer(
-            learning_rate=lr)
+        decay_step = (total_images / batch_size) * 2.4
+        lr = fluid.layers.exponential_decay(
+            learning_rate=start_lr, decay_steps=decay_step, decay_rate=0.97, staircase=True)
+        #lr = float(start_lr)
+        #warmup_epochs = 5
+        #steps_per_epoch = int((total_images / batch_size))
+        #warmup_steps = int(warmup_epochs * steps_per_epoch)
+        #global_step = _decay_step_counter()
+        #fluid.layers.Print(input=global_step, message="global_step:",summarize=100)
+        #warmup_lr = start_lr * global_step / warmup_steps
+        #print("cond:", global_step < warmup_steps)
+        #fluid.layers.Print(input=global_step < warmup_steps, message="cond_var:",summarize=100)
+        #lr = warmup_lr if global_step < warmup_steps else lr
+        #optimizer = fluid.optimizer.RMSPropOptimizer(learning_rate=lr, rho=0.9, momentum=0.9, epsilon=0.001)
+        #optimizer = fluid.optimizer.SGDOptimizer(learning_rate=lr)
+        optimizer = fluid.optimizer.Momentum(learning_rate=lr,
+                                             momentum=0.9,
+                                             regularization=fluid.regularizer.L2Decay(l2_decay))
     elif ls["name"] == "adam":
         lr = params["lr"]
         optimizer = fluid.optimizer.Adam(learning_rate=lr)
@@ -168,13 +182,12 @@ def net_config(image, label, model, args):
         for i in range(0, len(bottleneck_params_list), 7)
     ]
     out = model.net(input=image,
-                    bottleneck_params_list=bottleneck_params_list,
-                    class_dim=class_dim)
-    fluid.layers.Print(input=out, message="out:",summarize=100)
+                    bottleneck_params_list=bottleneck_params_list, class_dim=class_dim)
+    #fluid.layers.Print(input=out, message="out:",summarize=100)
     #fluid.layers.Print(input=label, message="label:",summarize=100)
     cost, pred = fluid.layers.softmax_with_cross_entropy(
         out, label, return_softmax=True)
-    fluid.layers.Print(input=pred, message="pred:",summarize=100)
+    #fluid.layers.Print(input=pred, message="pred:",summarize=100)
     #fluid.layers.Print(input=cost, message="cost:",summarize=100)
     if args.scale_loss > 1:
         avg_cost = fluid.layers.mean(x=cost) * float(args.scale_loss)
@@ -306,6 +319,8 @@ def train(args):
         #fluid.memory_optimize(test_prog)
     place = fluid.CUDAPlace(0) if args.use_gpu else fluid.CPUPlace()
     exe = fluid.Executor(place)
+#    print(train_prog)
+#    return
     exe.run(startup_prog)
 
 
@@ -377,8 +392,10 @@ def train(args):
         batch_id = 0
         try:
             while True:
-                weight = np.array(fluid.global_scope().find_var("fc000000.w_0").get_tensor())
-                print("fc000000.w_0: {} \n {}".format(weight.shape, weight))
+            #for i in range(1):
+            #if True:
+                #weight = np.array(fluid.global_scope().find_var("fc000000.w_0").get_tensor())
+                #print("fc000000.w_0: {} \n {}".format(weight.shape, weight))
                 t1 = time.time()
                 if use_ngraph:
                     loss, acc1, acc5, lr = train_exe.run(
