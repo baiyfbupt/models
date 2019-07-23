@@ -71,3 +71,13 @@ def check_cuda(use_cuda, err = \
             sys.exit(1)
     except Exception as e:
         pass
+
+
+def get_parameters(all_params, prefix):
+    parameters_name = []
+    parameters_val = []
+    for param in all_params:
+        if param.startswith(prefix):
+            parameters_name.append(param.name)
+            parameters_val.append(param)
+    return parameters_name, parameters_val

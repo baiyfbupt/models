@@ -73,7 +73,6 @@ def cell(s0, s1, steps, multiplier, c_out, reduction, reduction_prev):
 
 def model(x,
           y,
-          is_training,
           c_in,
           num_classes,
           layers,
@@ -81,6 +80,7 @@ def model(x,
           multiplier=4,
           stem_multiplier=3,
           name="model"):
+    #with unique_name.guard(""):
     c_curr = stem_multiplier * c_in
     s0 = fluid.layers.conv2d(x, c_curr, 3, padding=1, bias_attr=False)
     s0 = fluid.layers.batch_norm(s0)
