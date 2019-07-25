@@ -22,7 +22,7 @@ from model_search import model
 
 
 def compute_unrolled_step(image_train, label_train, image_val, label_val,
-                          all_params, model_var, train_loss, lr, args):
+                          all_params, model_var, lr, args):
     arch_var = utility.get_parameters(all_params, 'arch')[1]
     logits, unrolled_train_loss = model(
         image_train,
@@ -49,19 +49,34 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
     valid_grads = fluid.gradients(unrolled_valid_loss, unrolled_model_var)
 
     r = 1e-2
-    R = r * fluid.layers.rsqrt(valid_grads)
+    R = r * fluid.layers.rsqrt(
+        fluid.layers.reduce_sum(fluid.layers.square(valid_grads)))
 
     # w+ = w + eps*dw`
     optimizer_pos = fluid.optimizer.SGDOptimizer(R)
     optimizer_pos.apply_gradients([model_var, valid_grads])
+    logits, train_loss = model(image_train, label_train, args.init_channels,
+                               args.class_num, args.layers)
     train_grads_pos = fluid.gradients(train_loss, arch_var)
 
     # w- = w - eps*dw`
     optimizer_neg = fluid.optimizer.SGDOptimizer(-2 * R)
     optimizer_neg.apply_gradients([model_var, valid_grads])
-    train_grad_neg = fluid.gradients(train_loss,
-                                     arch_var)  # is train_loss updated?
+    logits, train_loss = model(image_train, label_train, args.init_channels,
+                               args.class_num, args.layers)
+    train_grads_neg = fluid.gradients(train_loss, arch_var)
 
     # recover w
     optimizer_back = fluid.optimizer.SGDOptimizer(R)
     optimizer_back.apply_gradients([model_var, valid_grads])
+    leader_opt = fluid.optimizer.Adam(args.arch_learning_rate, 0.5, 0.999)
+    leader_grads = leader_opt.backward(
+        unrolled_valid_loss, parameter_list=arch_var)
+
+    for i, (var, grad) in enumerate(leader_grads):
+        leader_grads[i] = (var, (
+            grad - args.learning_rate * fluid.layers.elementwise_div(
+                train_grads_pos[i] - train_grads_neg[i], 2 * R)))
+    leader_opt.apply_gradients(leader_grads)
+
+    return unrolled_valid_loss

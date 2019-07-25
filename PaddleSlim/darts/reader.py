@@ -16,94 +16,118 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from PIL import Image
+from PIL import ImageOps
 import os
 import math
 import random
+import cPickle
 import numpy as np
 from PIL import Image
 
-
-def _pre_process(x, label):
-    cutout_length = args.cutout_length
-    x = tf.pad(x, [[4, 4], [4, 4], [0, 0]])
-    x = tf.random_crop(x, [32, 32, 3])
-    x = tf.image.random_flip_left_right(x)
-    if cutout_length is not None:
-        mask = tf.ones([cutout_length, cutout_length], dtype=tf.int32)
-        start = tf.random_uniform([2], minval=0, maxval=32, dtype=tf.int32)
-        mask = tf.pad(mask, [[cutout_length + start[0], 32 - start[0]],
-                             [cutout_length + start[1], 32 - start[1]]])
-        mask = mask[cutout_length:cutout_length + 32, cutout_length:
-                    cutout_length + 32]
-        mask = tf.reshape(mask, [32, 32, 1])
-        mask = tf.tile(mask, [1, 1, 3])
-        x = tf.where(tf.equal(mask, 0), x=x, y=tf.zeros_like(x))
-    return x, label
+IMAGE_SIZE = 32
+IMAGE_DEPTH = 3
+CIFAR_MEAN = [0.49139968, 0.48215827, 0.44653124]
+CIFAR_STD = [0.24703233, 0.24348505, 0.26158768]
 
 
-def _read_data(data_path, train_files):
-    """Reads CIFAR-10 format data. Always returns NHWC format.
+def preprocess(sample, is_training, args):
+    image_array = sample.reshape(IMAGE_DEPTH, IMAGE_SIZE, IMAGE_SIZE)
+    rgb_array = np.transpose(image_array, (1, 2, 0))
+    img = Image.fromarray(rgb_array, 'RGB')
 
-  Returns:
-    images: np tensor of size [N, H, W, C]
-    labels: np tensor of size [N]
-  """
-    images, labels = [], []
-    for file_name in train_files:
-        print(file_name)
-        full_name = os.path.join(data_path, file_name)
-        with open(full_name, 'rb') as finp:
-            data = pickle.load(finp, encoding='iso-8859-1')
-            batch_images = data["data"].astype(np.float32) / 255.0
-            batch_labels = np.array(data["labels"], dtype=np.int32)
-            images.append(batch_images)
-            labels.append(batch_labels)
-    images = np.concatenate(images, axis=0)
-    labels = np.concatenate(labels, axis=0)
-    images = np.reshape(images, [-1, 3, 32, 32])
-    images = np.transpose(images, [0, 2, 3, 1])
+    if is_training:
+        # pad, ramdom crop, random_flip_left_right
+        img = ImageOps.expand(img, (4, 4, 4, 4), fill=0)
+        left_top = np.random.randint(9, size=2)  # rand 0 - 8
+        img = img.crop((left_top[0], left_top[1], left_top[0] + IMAGE_SIZE,
+                        left_top[1] + IMAGE_SIZE))
+        if np.random.randint(2):
+            img = img.transpose(Image.FLIP_LEFT_RIGHT)
 
-    return images, labels
+    img = np.array(img).astype(np.float32)
+
+    img_float = img / 255.0
+    img = (img_float - CIFAR_MEAN) / CIFAR_STD
+
+    if is_training and args.cutout:
+        center = np.random.randint(IMAGE_SIZE, size=2)
+        offset_width = max(0, center[0] - args.cutout_length // 2)
+        offset_height = max(0, center[1] - args.cutout_length // 2)
+        target_width = min(center[0] + args.cutout_length // 2, IMAGE_SIZE)
+        target_height = min(center[1] + args.cutout_length // 2, IMAGE_SIZE)
+
+        for i in range(offset_height, target_height):
+            for j in range(offset_width, target_width):
+                img[i][j][:] = 0.0
+
+    img = np.transpose(img, (2, 0, 1))
+    return img
 
 
-def train_reader(data_path, train_portion):
+def reader_generator(filename, sub_name, batch_size, is_training, args,
+                     train_portion, is_shuffle):
+    files = os.listdir(filename)
+    names = [each_item for each_item in files if sub_name in each_item]
+    names.sort()
+    datasets = []
+    for name in names:
+        print("Reading file " + name)
+        batch = cPickle.load(open(filename + name, 'rb'))
+        data = batch['data']
+        labels = batch.get('labels', batch.get('fine_labels', None))
+        assert labels is not None
+        dataset = zip(data, labels)
+        datasets.extend(dataset)
+    if is_shuffle:
+        random.shuffle(datasets)
+    split_point = int(np.floor(train_portion * len(datasets)))
+    train_datasets = dataset[:split_point]
+    val_datasets = dataset[split_point:]
 
-    images, labels = {}, {}
+    def read_batch(datasets, args):
+        for im, label in datasets:
+            im = preprocess(im, is_training, args)
+            yield im, [int(label)]
 
-    train_files = [
-        "data_batch_1",
-        "data_batch_2",
-        "data_batch_3",
-        "data_batch_4",
-        "data_batch_5",
-    ]
+    def reader():
+        train_batch_data = []
+        train_batch_label = []
+        val_batch_data = []
+        val_batch_label = []
+        for train, val in zip(
+                read_batch(train_datasets, args),
+                read_batch(val_datasets, args)):
+            train_batch_data.append(train[0])
+            train_batch_label.append(train[1])
+            val_batch_data.append(val[0])
+            val_batch_label.append(val[1])
+            if len(train_batch_data) == batch_size:
+                train_batch_data = np.array(train_batch_data, dtype='float32')
+                train_batch_label = np.array(train_batch_label, dtype='int64')
+                val_batch_data = np.array(val_batch_data, dtype='float32')
+                val_batch_label = np.array(val_batch_label, dtype='int64')
+                batch_out = [[
+                    train_batch_data, train_batch_label, val_batch_data,
+                    val_batch_label
+                ]]
+                yield batch_out
+                train_batch_data = []
+                train_batch_label = []
+                val_batch_data = []
+                val_batch_label = []
 
-    test_file = ["test_batch", ]
+    return reader
 
-    images["train"], labels["train"] = _read_data(data_path, train_files)
 
-    num_train = len(images["train"])
-    indices = list(range(num_train))
-    split = int(np.floor(train_portion * num_train))
+def train_val(args, batch_size, train_portion=1, is_shuffle=True):
+    """
+    CIFAR-10 training set creator.
+    It returns a reader creator, each sample in the reader is image pixels in
+    [0, 1] and label in [0, 9].
+    :return: Training reader creator
+    :rtype: callable
+    """
 
-    images["valid"] = images["train"][split:num_train]
-    labels["valid"] = labels["train"][split:num_train]
-
-    images["train"] = images["train"][:split]
-    labels["train"] = labels["train"][:split]
-
-    images["test"], labels["test"] = _read_data(data_path, test_file)
-
-    print("Prepropcess: [subtract mean], [divide std]")
-    mean = np.mean(images["train"], axis=(0, 1, 2), keepdims=True)
-    std = np.std(images["train"], axis=(0, 1, 2), keepdims=True)
-
-    print("mean: {}".format(np.reshape(mean * 255.0, [-1])))
-    print("std: {}".format(np.reshape(std * 255.0, [-1])))
-
-    images["train"] = (images["train"] - mean) / std
-
-    images["valid"] = (images["valid"] - mean) / std
-    images["test"] = (images["test"] - mean) / std
-
-    return images, labels
+    return reader_generator(args.data, 'data_batch', batch_size, True, args,
+                            train_portion, is_shuffle)
