@@ -73,7 +73,7 @@ def build_program(main_prog, startup_prog, args):
     with fluid.program_guard(main_prog, startup_prog):
         py_reader = fluid.layers.py_reader(
             capacity=64,
-            shape=[[-1] + image_shape, [-1, 1], [-1] + image_shape, [-1, 1]],
+            shapes=[[-1] + image_shape, [-1, 1], [-1] + image_shape, [-1, 1]],
             lod_levels=[0, 0, 0, 0],
             dtypes=["float32", "int64", "float32", "int64"],
             use_double_buffer=True)
@@ -97,7 +97,6 @@ def main(args):
     test_prog = fluid.Program()
     image_train, label_train, image_val, label_val, py_reader = build_program(
         main_prog=train_prog, startup_prog=startup_prog, args=args)
-
     test_prog = test_prog.clone(for_test=True)
     place = fluid.CUDAPlace(0) if args.use_gpu else fluid.CPUPlace()
     exe = fluid.Executor(place)

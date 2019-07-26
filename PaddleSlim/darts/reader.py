@@ -21,7 +21,7 @@ from PIL import ImageOps
 import os
 import math
 import random
-import cPickle
+import _pickle as cPickle
 import numpy as np
 from PIL import Image
 
