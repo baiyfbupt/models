@@ -100,7 +100,7 @@ def factorized_reduce(x, c_out, affine=True, name=None, layer=-1):
         stride=2,
         param_attr=fluid.ParamAttr(
             name=name + "/l{}/".format(layer) + "fr_conv1"),
-        bias=False)
+        bias_attr=False)
     conv2 = fluid.layers.conv2d(
         x_sliced,
         c_out // 2,
@@ -108,7 +108,7 @@ def factorized_reduce(x, c_out, affine=True, name=None, layer=-1):
         stride=2,
         param_attr=fluid.ParamAttr(
             name=name + "/l{}/".format(layer) + "fr_conv2"),
-        bias=False)
+        bias_attr=False)
     x = fluid.layers.concat(input=[conv1, conv2], axis=1)
     gama, beta = bn_param_config(name, layer, affine, "fr_bn")
     x = fluid.layers.batch_norm(x, param_attr=gama, bias_attr=beta)
@@ -134,7 +134,7 @@ def sep_conv(x,
         groups=c_in,
         param_attr=fluid.ParamAttr(
             name=name + "/l{}/".format(layer) + "sep_conv_1_1"),
-        bias=False)
+        bias_attr=False)
     x = fluid.layers.conv2d(
         x,
         c_in,
@@ -142,7 +142,7 @@ def sep_conv(x,
         padding=0,
         param_attr=fluid.ParamAttr(
             name=name + "/l{}/".format(layer) + "fr_conv_1_2"),
-        bias=False)
+        bias_attr=False)
     gama, beta = bn_param_config(name, layer, affine, "sep_conv_bn1")
     x = fluid.layers.batch_norm(x, param_attr=gama, bias_attr=beta)
     x = fluid.layers.relu(x)
@@ -155,7 +155,7 @@ def sep_conv(x,
         groups=c_in,
         param_attr=fluid.ParamAttr(
             name=name + "/l{}/".format(layer) + "fr_conv2_1"),
-        bias=False)
+        bias_attr=False)
     x = fluid.layers.conv2d(
         x,
         c_in,
@@ -163,7 +163,7 @@ def sep_conv(x,
         padding=0,
         param_attr=fluid.ParamAttr(
             name=name + "/l{}/".format(layer) + "fr_conv2_2"),
-        bias=False)
+        bias_attr=False)
     gama, beta = bn_param_config(name, layer, affine, "sep_conv_bn2")
     x = fluid.layers.batch_norm(x, param_attr=gama, bias_attr=beta)
     return x
@@ -190,7 +190,7 @@ def dil_conv(x,
         groups=c_in,
         param_attr=fluid.ParamAttr(
             name=name + "/l{}/".format(layer) + "dil_conv1"),
-        bias=False)
+        bias_attr=False)
     x = fluid.layers.conv2d(
         x,
         c_out,
@@ -198,7 +198,7 @@ def dil_conv(x,
         padding=0,
         param_attr=fluid.ParamAttr(
             name=name + "/l{}/".format(layer) + "dil_conv2"),
-        bias=False)
+        bias_attr=False)
     gama, beta = bn_param_config(name, layer, affine, "dil_conv_bn")
     x = fluid.layers.batch_norm(x, param_attr=gama, bias_attr=beta)
     return x
@@ -212,14 +212,14 @@ def conv_7x1_1x7(x, c_out, stride, affine=True, name=None, layer=-1):
         padding=(0, 3),
         param_attr=fluid.ParamAttr(
             name=name + "/l{}/".format(layer) + "conv_7x1_1x7_1"),
-        bias=False)
+        bias_attr=False)
     x = fluid.layers.conv2d(
         x,
         c_out, (7, 1),
         padding=(3, 0),
         param_attr=fluid.ParamAttr(
             name=name + "/l{}/".format(layer) + "conv_7x1_1x7_2"),
-        bias=False)
+        bias_attr=False)
     gama, beta = bn_param_config(name, layer, affine, "conv_7x1_1x7_bn")
     x = fluid.layers.batch_norm(x, param_attr=gama, bias_attr=beta)
     return x
@@ -242,7 +242,7 @@ def relu_conv_bn(x,
         padding=padding,
         param_attr=fluid.ParamAttr(
             name=name + "/l{}/".format(layer) + "rcb_conv"),
-        bias=False)
+        bias_attr=False)
     gama, beta = bn_param_config(name, layer, affine, "rcb_bn")
     x = fluid.layers.batch_norm(x, param_attr=gama, bias_attr=beta)
     return x

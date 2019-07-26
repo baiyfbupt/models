@@ -53,7 +53,7 @@ def mixed_op(x, c_out, stride, index, reduction, name, layer):
                 trainable=False)
             op = fluid.layers.batch_norm(op, param_attr=gama, bias_attr=beta)
         w = fluid.layers.slice(
-            weight, axis=[0], starts=[index], ends=[index + 1])
+            weight, axes=[0], starts=[index], ends=[index + 1])
         ops.append(fluid.layers.elementwise_mul(op, w))
         index += 1
     return fluid.layers.sums(ops)
@@ -73,7 +73,7 @@ def cell(s0, s1, steps, multiplier, c_out, reduction, reduction_prev, name,
         for j in range(2 + i):
             stride = 2 if reduction and j < 2 else 1
             temp.append(
-                mixed_op(stride[j], c_out, stride, offset + j, reduction, name,
+                mixed_op(state[j], c_out, stride, offset + j, reduction, name,
                          layer))
         offset += len(state)
         state.append(fluid.layers.sums(temp))

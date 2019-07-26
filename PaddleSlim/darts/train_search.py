@@ -97,7 +97,7 @@ def main(args):
     test_prog = fluid.Program()
 
     image_shape = [int(m) for m in args.image_shape.split(",")]
-    with fluid.program_guard(main_prog, startup_prog):
+    with fluid.program_guard(train_prog, startup_prog):
         py_reader = fluid.layers.py_reader(
             capacity=64,
             shapes=[[-1] + image_shape, [-1, 1], [-1] + image_shape, [-1, 1]],
