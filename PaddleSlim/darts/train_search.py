@@ -68,19 +68,19 @@ if not os.path.isdir(output_dir):
 CIFAR10 = 50000
 
 
-def build_program(main_prog, startup_prog, args):
-    image_shape = [int(m) for m in args.image_shape.split(",")]
-    with fluid.program_guard(main_prog, startup_prog):
-        py_reader = fluid.layers.py_reader(
-            capacity=64,
-            shapes=[[-1] + image_shape, [-1, 1], [-1] + image_shape, [-1, 1]],
-            lod_levels=[0, 0, 0, 0],
-            dtypes=["float32", "int64", "float32", "int64"],
-            use_double_buffer=True)
-        with fluid.unique_name.guard():
-            image_train, label_train, image_val, label_val = fluid.layers.read_file(
-                py_reader)
-    return image_train, label_train, image_val, label_val, py_reader
+# def build_program(main_prog, startup_prog, args):
+#     image_shape = [int(m) for m in args.image_shape.split(",")]
+#     with fluid.program_guard(main_prog, startup_prog):
+#         py_reader = fluid.layers.py_reader(
+#             capacity=64,
+#             shapes=[[-1] + image_shape, [-1, 1], [-1] + image_shape, [-1, 1]],
+#             lod_levels=[0, 0, 0, 0],
+#             dtypes=["float32", "int64", "float32", "int64"],
+#             use_double_buffer=True)
+#         with fluid.unique_name.guard():
+#             image_train, label_train, image_val, label_val = fluid.layers.read_file(
+#                 py_reader)
+#     return image_train, label_train, image_val, label_val, py_reader
 
 
 def main(args):
@@ -95,35 +95,44 @@ def main(args):
     startup_prog = fluid.Program()
     train_prog = fluid.Program()
     test_prog = fluid.Program()
-    image_train, label_train, image_val, label_val, py_reader = build_program(
-        main_prog=train_prog, startup_prog=startup_prog, args=args)
-    test_prog = test_prog.clone(for_test=True)
-    place = fluid.CUDAPlace(0) if args.use_gpu else fluid.CPUPlace()
-    exe = fluid.Executor(place)
-    exe.run(startup_prog)
 
-    step_per_epoch = int(CIFAR10 / args.batch_size)
-    learning_rate = fluid.layers.cosine_decay(args.learning_rate, step_per_epoch,
+    image_shape = [int(m) for m in args.image_shape.split(",")]
+    with fluid.program_guard(main_prog, startup_prog):
+        py_reader = fluid.layers.py_reader(
+            capacity=64,
+            shapes=[[-1] + image_shape, [-1, 1], [-1] + image_shape, [-1, 1]],
+            lod_levels=[0, 0, 0, 0],
+            dtypes=["float32", "int64", "float32", "int64"],
+            use_double_buffer=True)
+        with fluid.unique_name.guard():
+            image_train, label_train, image_val, label_val = fluid.layers.read_file(
+                    py_reader)
+
+            step_per_epoch = int(CIFAR10 / args.batch_size)
+            learning_rate = fluid.layers.cosine_decay(args.learning_rate, step_per_epoch,
                                    args.epochs)
 
-    all_params = train_prog.global_block().all_parameters()
+            all_params = train_prog.global_block().all_parameters()
 
-    model_var = utility.get_parameters(all_params, 'model')[1]
+            model_var = utility.get_parameters(all_params, 'model')[1]
 
-    unrolled_valid_loss = architect.compute_unrolled_step(image_train, label_train, image_val,
+            unrolled_valid_loss = architect.compute_unrolled_step(image_train, label_train, image_val,
                                     label_val, all_params, model_var, learning_rate, args)
-    follower_opt = fluid.optimizer.MomentumOptimizer(learning_rate, args.momentum)
-    train_logits, train_loss = model(image_train, label_train, args.init_channels,
-                               args.class_num, args.layers)
-    train_top1 = fluid.layers.accuracy(input=train_logits, label = label_train, k=1)
-    train_top5 = fluid.layers.accuracy(input=train_logits, label = label_train, k=5)
+            follower_opt = fluid.optimizer.MomentumOptimizer(learning_rate, args.momentum)
+            train_logits, train_loss = model(image_train, label_train, args.init_channels,
+                                             args.class_num, args.layers)
+            train_top1 = fluid.layers.accuracy(input=train_logits, label = label_train, k=1)
+            train_top5 = fluid.layers.accuracy(input=train_logits, label = label_train, k=5)
 
-    follower_grads = fluid.gradients(train_loss, model_var)
-    fluid.clip.set_gradient_clip(
-        clip=fluid.clip.GradientClipByGlobalNorm(clip_norm=5.0),
-        param_list=model_var)
-    follower_opt.apply_gradients([model_var, follower_grads])
+            follower_grads = fluid.gradients(train_loss, model_var)
+            fluid.clip.set_gradient_clip(
+                clip=fluid.clip.GradientClipByGlobalNorm(clip_norm=5.0),
+                param_list=model_var)
+            follower_opt.apply_gradients([model_var, follower_grads])
 
+    # image_train, label_train, image_val, label_val, py_reader = build_program(
+    #     main_prog=train_prog, startup_prog=startup_prog, args=args)
+    test_prog = test_prog.clone(for_test=True)
     place = fluid.CUDAPlace(0) if args.use_gpu else fluid.CPUPlace()
     exe = fluid.Executor(place)
     exe.run(startup_prog)
@@ -132,6 +141,7 @@ def main(args):
         fluid.memory_optimize(train_prog)
 
     train_reader = reader.train_val(args, batch_size_per_device, args.train_portion, is_shuffle)
+    py_reader.decorate_tensor_provider(py_reader)
 
     exec_strategy = fluid.ExecutionStrategy()
     exec_strategy.num_threads = 1
