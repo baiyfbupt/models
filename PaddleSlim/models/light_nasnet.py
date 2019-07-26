@@ -29,7 +29,12 @@ class LightNASNet(object):
     def __init__(self):
         self.params = train_parameters
 
-    def net(self, input, bottleneck_params_list=None, class_dim=1000,
+    def net(self,
+            is_infer,
+            image_shape,
+            input,
+            bottleneck_params_list=None,
+            class_dim=1000,
             scale=1.0):
         """Build network.
 
@@ -61,8 +66,12 @@ class LightNASNet(object):
                 (6, 192, 4, 2, 5, 1, 0),
                 (6, 320, 1, 1, 3, 1, 0),
             ]
+        if is_infer:
+            image_shape = [int(m) for m in image_shape.split(",")]
+            input = fluid.layers.data(
+                name='image', shape=image_shape, dtype='float32')
 
-        #conv1
+#conv1
         input = self.conv_bn_layer(
             input,
             num_filters=int(32 * scale),

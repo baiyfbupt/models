@@ -32,7 +32,7 @@ add_arg('bottleneck_params_list', str, '[1,16,1,1,3,1,0,6,24,2,2,3,1,0,'
         '6,320,1,1,3,1,0]', "Network architecture.")
 add_arg('target_latency', float, 629145600, "Target latency.")
 add_arg('metric', str, 'flops', "Metric for latency: flops/time.")
-add_arg('batch_size', int, 100, "Minibatch size.")
+add_arg('batch_size', int, 4, "Minibatch size.")
 add_arg('use_gpu', bool, True, "Whether to use GPU or not.")
 add_arg('total_images', int, 1281167, "Training image number.")
 add_arg('num_epochs', int, 1, "number of epochs.")
@@ -163,8 +163,8 @@ def net_config(image, label, model, args):
                     class_dim=class_dim)
     cost, pred = fluid.layers.softmax_with_cross_entropy(
         out, label, return_softmax=True)
-    fluid.layers.Print(input=pred, message="\npred:",summarize=200)
-    fluid.layers.Print(input=cost, message="\ncost:",summarize=200)
+    fluid.layers.Print(input=pred, message="\npred:", summarize=200)
+    fluid.layers.Print(input=cost, message="\ncost:", summarize=200)
     if args.scale_loss > 1:
         avg_cost = fluid.layers.mean(x=cost) * float(args.scale_loss)
     else:

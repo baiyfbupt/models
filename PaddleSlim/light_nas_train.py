@@ -30,7 +30,7 @@ add_arg(
     'bottleneck_params_list', str,
     '[1,16,1,1,3,1,0,3,24,3,2,3,1,0,3,40,3,2,5,1,0,6,80,3,2,5,1,0,6,96,2,1,3,1,0,6,192,4,2,5,1,0,6,320,1,1,3,1,0]',
     "Network architecture.")
-add_arg('batch_size', int, 384, "Minibatch size.")
+add_arg('batch_size', int, 2, "Minibatch size.")
 add_arg('use_gpu', bool, True, "Whether to use GPU or not.")
 add_arg('total_images', int, 1281167, "Training image number.")
 add_arg('num_epochs', int, 240, "number of epochs.")
@@ -167,7 +167,7 @@ def optimizer_setting(params):
     return optimizer
 
 
-def net_config(image, label, model, args):
+def net_config(image, label, is_infer, model, args):
     """net config.
 
     Args:
@@ -185,7 +185,9 @@ def net_config(image, label, model, args):
         bottleneck_params_list[i:i + 7]
         for i in range(0, len(bottleneck_params_list), 7)
     ]
-    out = model.net(input=image,
+    out = model.net(is_infer=is_infer,
+                    image_shape=args.image_shape,
+                    input=image,
                     bottleneck_params_list=bottleneck_params_list,
                     class_dim=class_dim)
     cost, pred = fluid.layers.softmax_with_cross_entropy(
@@ -196,10 +198,10 @@ def net_config(image, label, model, args):
         avg_cost = fluid.layers.mean(x=cost)
     acc_top1 = fluid.layers.accuracy(input=pred, label=label, k=1)
     acc_top5 = fluid.layers.accuracy(input=pred, label=label, k=5)
-    return avg_cost, acc_top1, acc_top5
+    return avg_cost, acc_top1, acc_top5, pred
 
 
-def build_program(is_train, main_prog, startup_prog, args):
+def build_program(exe, is_train, main_prog, startup_prog, args):
     """build program.
 
     Args:
@@ -230,7 +232,8 @@ def build_program(is_train, main_prog, startup_prog, args):
             image, label = fluid.layers.read_file(py_reader)
             if args.fp16:
                 image = fluid.layers.cast(image, "float16")
-            avg_cost, acc_top1, acc_top5 = net_config(image, label, model, args)
+            avg_cost, acc_top1, acc_top5, pred = net_config(
+                image, label, not is_train, model, args)
 
             avg_cost.persistable = True
             acc_top1.persistable = True
@@ -256,9 +259,9 @@ def build_program(is_train, main_prog, startup_prog, args):
                     optimizer.minimize(avg_cost)
                 global_lr = optimizer._global_learning_rate()
     if is_train:
-        return py_reader, avg_cost, acc_top1, acc_top5, global_lr
+        return py_reader, avg_cost, acc_top1, acc_top5, pred, global_lr
     else:
-        return py_reader, avg_cost, acc_top1, acc_top5
+        return py_reader, avg_cost, acc_top1, acc_top5, pred, image, label
 
 
 def get_device_num(use_gpu):
@@ -300,12 +303,16 @@ def train(args):
     if args.enable_ce:
         startup_prog.random_seed = 1000
         train_prog.random_seed = 1000
-    train_py_reader, train_cost, train_acc1, train_acc5, global_lr = build_program(
+    place = fluid.CUDAPlace(0) if args.use_gpu else fluid.CPUPlace()
+    exe = fluid.Executor(place)
+    train_py_reader, train_cost, train_acc1, train_acc5, pred, global_lr = build_program(
+        exe,
         is_train=True,
         main_prog=train_prog,
         startup_prog=startup_prog,
         args=args)
-    test_py_reader, test_cost, test_acc1, test_acc5 = build_program(
+    test_py_reader, test_cost, test_acc1, test_acc5, pred, image, label = build_program(
+        exe,
         is_train=False,
         main_prog=test_prog,
         startup_prog=startup_prog,
@@ -314,9 +321,11 @@ def train(args):
     if with_memory_optimization:
         fluid.memory_optimize(train_prog)
         fluid.memory_optimize(test_prog)
-    place = fluid.CUDAPlace(0) if args.use_gpu else fluid.CPUPlace()
-    exe = fluid.Executor(place)
     exe.run(startup_prog)
+
+    fluid.io.save_inference_model(
+        "./inference_model", ["image"], [pred], exe, main_program=test_prog)
+    print("save_inference done")
 
     if checkpoint:
         fluid.io.load_persistables(exe, checkpoint, main_program=train_prog)
@@ -454,7 +463,9 @@ def train(args):
                                   str(pass_id))
         if not os.path.isdir(model_path):
             os.makedirs(model_path)
-        fluid.io.save_persistables(exe, model_path, main_program=train_prog)
+        #fluid.io.save_persistables(exe, model_path, main_program=train_prog)
+        #fluid.io.save_inference_model(model_path, [image.name, label.name], [test_cost.name, test_acc1.name, test_acc5.name], exe)
+        #print("save_inference done")
         # This is for continuous evaluation only
         if args.enable_ce and pass_id == args.num_epochs - 1:
             if device_num == 1:
