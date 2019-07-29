@@ -32,7 +32,8 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
         args.layers,
         name="unrolled_model")
     unrolled_model_var = utility.get_parameters(all_params, 'unrolled_model')[1]
-    fluid.layers.assign(model_var, unrolled_model_var)
+    for m_var, um_var in zip(model_var, unrolled_model_var):
+        fluid.layers.assign(m_var, um_var)
 
     unrolled_optimizer = fluid.optimizer.SGDOptimizer(lr)
     unrolled_optimizer.minimize(

@@ -91,8 +91,14 @@ class AvgrageMeter(object):
 def get_parameters(all_params, prefix):
     parameters_name = []
     parameters_val = []
+    #if prefix is "unrolled_model":
+    #    for param in all_params:
+    #        parameters_name.append(param.name)
+    #    print(parameters_name)
+    #    parameters_name = []
     for param in all_params:
         if param.name.startswith(prefix):
             parameters_name.append(param.name)
             parameters_val.append(param)
+    print(parameters_name, len(prefix))
     return parameters_name, parameters_val

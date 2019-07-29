@@ -112,8 +112,9 @@ def main(args):
             learning_rate = fluid.layers.cosine_decay(args.learning_rate, step_per_epoch,
                                    args.epochs)
 
+            train_logits, train_loss = model(image_train, label_train, args.init_channels,
+                                             args.class_num, args.layers)
             all_params = train_prog.global_block().all_parameters()
-
             model_var = utility.get_parameters(all_params, 'model')[1]
 
             unrolled_valid_loss = architect.compute_unrolled_step(image_train, label_train, image_val,
@@ -129,7 +130,6 @@ def main(args):
                 clip=fluid.clip.GradientClipByGlobalNorm(clip_norm=5.0),
                 param_list=model_var)
             follower_opt.apply_gradients([model_var, follower_grads])
-
     # image_train, label_train, image_val, label_val, py_reader = build_program(
     #     main_prog=train_prog, startup_prog=startup_prog, args=args)
     test_prog = test_prog.clone(for_test=True)

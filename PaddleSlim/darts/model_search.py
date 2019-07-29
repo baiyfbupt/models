@@ -91,7 +91,7 @@ def model(x,
           multiplier=4,
           stem_multiplier=3,
           name="model"):
-    #with unique_name.guard(""):
+    print("name=", name)
     c_curr = stem_multiplier * c_in
     s0 = fluid.layers.conv2d(
         x,
@@ -131,7 +131,7 @@ def model(x,
         out,
         num_classes,
         param_attr=fluid.ParamAttr(name=name + "/" + "fc_weights"),
-        bias_attr=fluid.ParamAttr(name=name + "/l" + "fc_bias"))
+        bias_attr=fluid.ParamAttr(name=name + "/" + "fc_bias"))
     train_loss = fluid.layers.reduce_mean(
         fluid.layers.softmax_with_cross_entropy(logits, y))
     return logits, train_loss
