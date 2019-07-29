@@ -42,19 +42,19 @@ OPS = {
     if stride == [1, 1] else factorized_reduce(x, C, affine, name),
     'sep_conv_3x3':
     lambda x, C, stride, affine, name: sep_conv(x, C, [3, 3], stride, 1,
-                                                       affine, name),
+                                                       affine, name + "/3x3"),
     'sep_conv_5x5':
     lambda x, C, stride, affine, name: sep_conv(x, C, [5, 5], stride, 2,
-                                                       affine, name),
+                                                       affine, name + "/5x5"),
     'sep_conv_7x7':
     lambda x, C, stride, affine, name: sep_conv(x, C, [7, 7], stride, 3,
-                                                       affine, name),
+                                                       affine, name + "/7x7"),
     'dil_conv_3x3':
     lambda x, C, stride, affine, name: dil_conv(x, C, [3, 3], stride, 2,
-                                                       2, affine, name),
+                                                       2, affine, name + "/3x3"),
     'dil_conv_5x5':
     lambda x, C, stride, affine, name: dil_conv(x, C, [5, 5], stride, 4,
-                                                       2, affine, name),
+                                                       2, affine, name + "/5x5"),
     'conv_7x1_1x7':
     lambda x, C, stride, affine, name: conv_7x1_1x7(
         x, C, stride, affine, name),

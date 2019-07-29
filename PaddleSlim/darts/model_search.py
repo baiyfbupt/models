@@ -121,7 +121,7 @@ def model(x,
         else:
             reduction = False
         s0, s1 = s1, cell(s0, s1, steps, multiplier, c_curr, reduction,
-                          reduction_prev, name + "/" + str(i))
+                          reduction_prev, name + "/l" + str(i))
         reduction_prev = reduction
     out = fluid.layers.pool2d(s1, pool_type='avg', global_pooling=True)
     out = fluid.layers.squeeze(out, [2, 3])
