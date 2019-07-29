@@ -39,7 +39,7 @@ OPS = {
         pool_padding=1),
     'skip_connect':
     lambda x, C, stride, affine, name: identity(x)
-    if stride == [1, 1] else factorized_reduce(x, C, affine, name),
+    if stride == 1 else factorized_reduce(x, C, affine, name),
     'sep_conv_3x3':
     lambda x, C, stride, affine, name: sep_conv(x, C, [3, 3], stride, 1,
                                                        affine, name + "/3x3"),
@@ -81,9 +81,8 @@ def bn_param_config(name=None, affine=False, op=None):
 
 def zero(x, stride):
     pooled = fluid.layers.pool2d(input=x, pool_size=1, pool_stride=[2, 2])
-    x = fluid.layers.zeros_like(x) if stride == [
-        1, 1
-    ] else fluid.layers.zeros_like(pooled)
+    x = fluid.layers.zeros_like(x) if stride == 1 else fluid.layers.zeros_like(
+        pooled)
     return x
 
 

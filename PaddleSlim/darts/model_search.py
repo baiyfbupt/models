@@ -40,6 +40,7 @@ def mixed_op(x, c_out, stride, index, reduction, name):
     weight = fluid.layers.softmax(weight)
     ops = []
     index = 0
+    # print(c_out, stride, index, reduction, name)
     for primitive in PRIMITIVES:
         op = OPS[primitive](x, c_out, stride, False, name)
         if 'pool' in primitive:
@@ -56,6 +57,7 @@ def mixed_op(x, c_out, stride, index, reduction, name):
             weight, axes=[0], starts=[index], ends=[index + 1])
         ops.append(fluid.layers.elementwise_mul(op, w))
         index += 1
+    # print(ops)
     return fluid.layers.sums(ops)
 
 
