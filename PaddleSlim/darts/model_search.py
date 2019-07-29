@@ -28,7 +28,7 @@ from genotypes import Genotype
 from operations import *
 
 
-def mixed_op(x, c_out, stride, index, reduction, name, layer):
+def mixed_op(x, c_out, stride, index, reduction, name):
     param_attr = ParamAttr(
         name="arch/weight{}_{}".format(2 if reduction else 1, index))
     weight = fluid.layers.create_parameter(
@@ -41,14 +41,14 @@ def mixed_op(x, c_out, stride, index, reduction, name, layer):
     ops = []
     index = 0
     for primitive in PRIMITIVES:
-        op = OPS[primitive](x, c_out, stride, False, name, layer)
+        op = OPS[primitive](x, c_out, stride, False, name)
         if 'pool' in primitive:
             gama = ParamAttr(
-                name=name + "/l{}/".format(layer) + "mixed_bn_gama",
+                name=name + "/mixed_bn_gama",
                 initializer=fluid.initializer.Constant(value=1),
                 trainable=False)
             beta = ParamAttr(
-                name=name + "/l{}/".format(layer) + "mixed_bn_beta",
+                name=name + "/mixed_bn_beta",
                 initializer=fluid.initializer.Constant(value=0),
                 trainable=False)
             op = fluid.layers.batch_norm(op, param_attr=gama, bias_attr=beta)
@@ -59,13 +59,12 @@ def mixed_op(x, c_out, stride, index, reduction, name, layer):
     return fluid.layers.sums(ops)
 
 
-def cell(s0, s1, steps, multiplier, c_out, reduction, reduction_prev, name,
-         layer):
+def cell(s0, s1, steps, multiplier, c_out, reduction, reduction_prev, name):
     if reduction_prev:
-        s0 = factorized_reduce(s0, c_out, False, name, layer)
+        s0 = factorized_reduce(s0, c_out, False, name + "/s-2")
     else:
-        s0 = relu_conv_bn(s0, c_out, 1, 1, 0, False, name, layer)
-    s1 = relu_conv_bn(s1, c_out, 1, 1, 0, False, name, layer)
+        s0 = relu_conv_bn(s0, c_out, 1, 1, 0, False, name + "/s-2")
+    s1 = relu_conv_bn(s1, c_out, 1, 1, 0, False, name + '/s-1')
     state = [s0, s1]
     offset = 0
     for i in range(steps):
@@ -73,8 +72,8 @@ def cell(s0, s1, steps, multiplier, c_out, reduction, reduction_prev, name,
         for j in range(2 + i):
             stride = 2 if reduction and j < 2 else 1
             temp.append(
-                mixed_op(state[j], c_out, stride, offset + j, reduction, name,
-                         layer))
+                mixed_op(state[j], c_out, stride, offset + j, reduction, name +
+                         "/s" + str(i)))
         offset += len(state)
         state.append(fluid.layers.sums(temp))
     out = fluid.layers.concat(input=state[-multiplier:], axis=1)
@@ -122,7 +121,7 @@ def model(x,
         else:
             reduction = False
         s0, s1 = s1, cell(s0, s1, steps, multiplier, c_curr, reduction,
-                          reduction_prev, name, i)
+                          reduction_prev, name + "/" + str(i))
         reduction_prev = reduction
     out = fluid.layers.pool2d(s1, pool_type='avg', global_pooling=True)
     out = fluid.layers.squeeze(out, [2, 3])
@@ -130,7 +129,7 @@ def model(x,
         out,
         num_classes,
         param_attr=fluid.ParamAttr(name=name + "/" + "fc_weights"),
-        bias_attr=fluid.ParamAttr(name=name + "/" + "fc_bias"))
+        bias_attr=fluid.ParamAttr(name=name + "/l" + "fc_bias"))
     train_loss = fluid.layers.reduce_mean(
         fluid.layers.softmax_with_cross_entropy(logits, y))
     return logits, train_loss
