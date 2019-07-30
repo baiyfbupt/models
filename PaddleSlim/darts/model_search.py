@@ -91,7 +91,6 @@ def model(x,
           multiplier=4,
           stem_multiplier=3,
           name="model"):
-    print("name=", name)
     c_curr = stem_multiplier * c_in
     s0 = fluid.layers.conv2d(
         x,

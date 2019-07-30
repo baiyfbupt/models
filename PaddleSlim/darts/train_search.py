@@ -98,12 +98,14 @@ def main(args):
 
     image_shape = [int(m) for m in args.image_shape.split(",")]
     with fluid.program_guard(train_prog, startup_prog):
+        print("py_reader def", time.time())
         py_reader = fluid.layers.py_reader(
             capacity=64,
             shapes=[[-1] + image_shape, [-1, 1], [-1] + image_shape, [-1, 1]],
             lod_levels=[0, 0, 0, 0],
             dtypes=["float32", "int64", "float32", "int64"],
             use_double_buffer=True)
+        print("py_reader def done", time.time())
         with fluid.unique_name.guard():
             image_train, label_train, image_val, label_val = fluid.layers.read_file(
                     py_reader)
@@ -112,24 +114,27 @@ def main(args):
             learning_rate = fluid.layers.cosine_decay(args.learning_rate, step_per_epoch,
                                    args.epochs)
 
-            train_logits, train_loss = model(image_train, label_train, args.init_channels,
-                                             args.class_num, args.layers)
-            all_params = train_prog.global_block().all_parameters()
-            model_var = utility.get_parameters(all_params, 'model')[1]
-
+            print("before compute_unrolled_step", time.time())
             unrolled_valid_loss = architect.compute_unrolled_step(image_train, label_train, image_val,
-                                    label_val, all_params, model_var, learning_rate, args)
+                                    label_val, train_prog, learning_rate, args)
+            print("after compute_unrolled_step", time.time())
             follower_opt = fluid.optimizer.MomentumOptimizer(learning_rate, args.momentum)
             train_logits, train_loss = model(image_train, label_train, args.init_channels,
                                              args.class_num, args.layers)
+            print("get train_logits", time.time())
             train_top1 = fluid.layers.accuracy(input=train_logits, label = label_train, k=1)
             train_top5 = fluid.layers.accuracy(input=train_logits, label = label_train, k=5)
+
+            all_params = train_prog.global_block().all_parameters()
+            model_var = utility.get_parameters(all_params, 'model')[1]
 
             follower_grads = fluid.gradients(train_loss, model_var)
             fluid.clip.set_gradient_clip(
                 clip=fluid.clip.GradientClipByGlobalNorm(clip_norm=5.0),
                 param_list=model_var)
-            follower_opt.apply_gradients([model_var, follower_grads])
+            params_grads = [(var, grad) for var, grad in zip(model_var, follower_grads)]
+            follower_opt.apply_gradients(params_grads)
+            print("follower_opt_done", time.time())
     # image_train, label_train, image_val, label_val, py_reader = build_program(
     #     main_prog=train_prog, startup_prog=startup_prog, args=args)
     test_prog = test_prog.clone(for_test=True)

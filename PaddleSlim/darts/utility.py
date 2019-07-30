@@ -100,5 +100,5 @@ def get_parameters(all_params, prefix):
         if param.name.startswith(prefix):
             parameters_name.append(param.name)
             parameters_val.append(param)
-    print(parameters_name, len(prefix))
+    #print(parameters_name, prefix)
     return parameters_name, parameters_val
