@@ -53,12 +53,12 @@ def mixed_op(x, c_out, stride, index, reduction, name):
                 initializer=fluid.initializer.Constant(value=0),
                 trainable=False)
             op = fluid.layers.batch_norm(op, param_attr=gama, bias_attr=beta)
-        w = fluid.layers.slice(
-            weight, axes=[0], starts=[index], ends=[index + 1])
-        ops.append(fluid.layers.elementwise_mul(op, w))
+        #w = fluid.layers.slice(
+        #    weight, axes=[0], starts=[index], ends=[index + 1])
+        ops.append(fluid.layers.elementwise_mul(op, weight[index]))
         index += 1
-    # print(ops)
-    return fluid.layers.sums(ops)
+    out = fluid.layers.sums(ops)
+    return out
 
 
 def cell(s0, s1, steps, multiplier, c_out, reduction, reduction_prev, name):
@@ -115,6 +115,7 @@ def model(x,
         param_attr=fluid.ParamAttr(name=name + "/" + "bn1_scale"),
         bias_attr=fluid.ParamAttr(name=name + "/" + "bn1_offset"))
     reduction_prev = False
+
     for i in range(layers):
         if i in [layers // 3, 2 * layers // 3]:
             c_curr *= 2
@@ -125,7 +126,8 @@ def model(x,
                           reduction_prev, name + "/l" + str(i))
         reduction_prev = reduction
     out = fluid.layers.pool2d(s1, pool_type='avg', global_pooling=True)
-    out = fluid.layers.squeeze(out, [2, 3])
+    #out = fluid.layers.squeeze(out, [2, 3])
+    out = fluid.layers.reshape(out, [-1, 0])
     logits = fluid.layers.fc(
         out,
         num_classes,

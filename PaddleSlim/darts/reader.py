@@ -39,7 +39,7 @@ def preprocess(sample, is_training, args):
     if is_training:
         # pad, ramdom crop, random_flip_left_right
         img = ImageOps.expand(img, (4, 4, 4, 4), fill=0)
-        left_top = np.random.randint(9, size=2)  # rand 0 - 8
+        left_top = np.random.randint(9, size=2)
         img = img.crop((left_top[0], left_top[1], left_top[0] + IMAGE_SIZE,
                         left_top[1] + IMAGE_SIZE))
         if np.random.randint(2):
@@ -73,7 +73,8 @@ def reader_generator(filename, sub_name, batch_size, is_training, args,
     datasets = []
     for name in names:
         print("Reading file " + name)
-        batch = cPickle.load(open(filename + name, 'rb'))
+        batch = cPickle.load(
+            open(os.path.join(filename, name), 'rb'), encoding='iso-8859-1')
         data = batch['data']
         labels = batch.get('labels', batch.get('fine_labels', None))
         assert labels is not None
@@ -82,8 +83,8 @@ def reader_generator(filename, sub_name, batch_size, is_training, args,
     if is_shuffle:
         random.shuffle(datasets)
     split_point = int(np.floor(train_portion * len(datasets)))
-    train_datasets = dataset[:split_point]
-    val_datasets = dataset[split_point:]
+    train_datasets = datasets[:split_point]
+    val_datasets = datasets[split_point:]
 
     def read_batch(datasets, args):
         for im, label in datasets:
