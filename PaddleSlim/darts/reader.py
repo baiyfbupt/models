@@ -108,10 +108,10 @@ def reader_generator(filename, sub_name, batch_size, is_training, args,
                 train_batch_label = np.array(train_batch_label, dtype='int64')
                 val_batch_data = np.array(val_batch_data, dtype='float32')
                 val_batch_label = np.array(val_batch_label, dtype='int64')
-                batch_out = [[
+                batch_out = [
                     train_batch_data, train_batch_label, val_batch_data,
                     val_batch_label
-                ]]
+                ]
                 yield batch_out
                 train_batch_data = []
                 train_batch_label = []

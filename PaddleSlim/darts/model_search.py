@@ -18,7 +18,7 @@ from __future__ import print_function
 
 import os
 import sys
-
+import time
 import numpy as np
 import paddle.fluid as fluid
 from paddle.fluid.param_attr import ParamAttr
@@ -40,7 +40,6 @@ def mixed_op(x, c_out, stride, index, reduction, name):
     weight = fluid.layers.softmax(weight)
     ops = []
     index = 0
-    # print(c_out, stride, index, reduction, name)
     for primitive in PRIMITIVES:
         op = OPS[primitive](x, c_out, stride, False, name)
         if 'pool' in primitive:
@@ -53,8 +52,6 @@ def mixed_op(x, c_out, stride, index, reduction, name):
                 initializer=fluid.initializer.Constant(value=0),
                 trainable=False)
             op = fluid.layers.batch_norm(op, param_attr=gama, bias_attr=beta)
-        #w = fluid.layers.slice(
-        #    weight, axes=[0], starts=[index], ends=[index + 1])
         ops.append(fluid.layers.elementwise_mul(op, weight[index]))
         index += 1
     out = fluid.layers.sums(ops)
@@ -126,7 +123,6 @@ def model(x,
                           reduction_prev, name + "/l" + str(i))
         reduction_prev = reduction
     out = fluid.layers.pool2d(s1, pool_type='avg', global_pooling=True)
-    #out = fluid.layers.squeeze(out, [2, 3])
     out = fluid.layers.reshape(out, [-1, 0])
     logits = fluid.layers.fc(
         out,

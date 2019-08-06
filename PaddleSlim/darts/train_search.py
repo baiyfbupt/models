@@ -35,16 +35,17 @@ add_arg = functools.partial(utility.add_arguments, argparser=parser)
 
 # yapf: disable
 add_arg('parallel',          bool,  True,            "Whether use multi-GPU/threads or not.")
+add_arg('use_pyreader',      bool,  False,            "Whether use pyreader or not.")
 add_arg('data',              str,   './data/cifar-10-batches-py', "The dir of dataset.")
-add_arg('batch_size',        int,   64,              "Minibatch size.")
+add_arg('batch_size',        int,   16,              "Minibatch size.")
 add_arg('learning_rate',     float, 0.025,           "The start learning rate.")
 add_arg('learning_rate_min', float, 0.001,           "The min learning rate.")
 add_arg('momentum',          float, 0.9,             "Momentum.")
 add_arg('weight_decay',      float, 3e-4,            "Weight_decay.")
 add_arg('use_gpu',           bool,  True,            "Whether use GPU.")
 add_arg('epochs',            int,   50,              "Epoch number.")
-add_arg('init_channels',     int,   1,              "Init channel number.")
-add_arg('layers',            int,   1,               "Total number of layers.")
+add_arg('init_channels',     int,   16,              "Init channel number.")
+add_arg('layers',            int,   8,               "Total number of layers.")
 add_arg('class_num',         int,   10,              "Class number of dataset.")
 add_arg('model_save_dir',    str,   'output',        "The path to save model.")
 add_arg('cutout_length',     int,   16,              "Cutout length.")
@@ -74,36 +75,46 @@ def main(args):
     devices = os.getenv("CUDA_VISIBLE_DEVICES") or ""
     devices_num = len(devices.split(","))
     batch_size_per_device = args.batch_size // devices_num
+    step_per_epoch = int(CIFAR10 / 2 / args.batch_size)
     is_shuffle = True
 
     startup_prog = fluid.Program()
-    #reader_prog = fluid.Program()
-
-    train_prog = fluid.Program()
-    #modelp_prog = fluid.Program()
-    #modelm_prog = fluid.Program()
-    #arch_prog = fluid.Program()
+    config_prog = fluid.Program()
+    umodel_prog = fluid.Program()
+    modelp_prog = fluid.Program()
     test_prog = fluid.Program()
 
     image_shape = [int(m) for m in args.image_shape.split(",")]
-    with fluid.program_guard(train_prog, startup_prog):
-        py_reader = fluid.layers.py_reader(
-            capacity=64,
-            shapes=[[-1] + image_shape, [-1, 1], [-1] + image_shape, [-1, 1]],
-            lod_levels=[0, 0, 0, 0],
-            dtypes=["float32", "int64", "float32", "int64"],
-            use_double_buffer=True)
+    print("=" * 50)
+    print("begin construct graph", time.time())
+    with fluid.program_guard(config_prog, startup_prog):
+        if args.use_pyreader == True:
+            py_reader = fluid.layers.py_reader(
+                capacity=64,
+                shapes=[[-1] + image_shape, [-1, 1], [-1] + image_shape, [-1, 1]],
+                lod_levels=[0, 0, 0, 0],
+                dtypes=["float32", "int64", "float32", "int64"],
+                use_double_buffer=True)
         with fluid.unique_name.guard():
             # split data to train(for model_var optimize) and val(for arch_var optimize)
-            image_train, label_train, image_val, label_val = fluid.layers.read_file(
-                    py_reader)
-            step_per_epoch = int(CIFAR10 / args.batch_size)
+            if args.use_pyreader == True:
+                image_train, label_train, image_val, label_val = fluid.layers.read_file(
+                        py_reader)
+            else:
+                image_train = fluid.layers.data(name="image_train", shape=image_shape, dtype="float32")
+                label_train = fluid.layers.data(name="label_train", shape=[1], dtype="int64")
+                image_val = fluid.layers.data(name="image_val", shape=image_shape, dtype="float32")
+                label_val = fluid.layers.data(name="label_val", shape=[1], dtype="int64")
             learning_rate = fluid.layers.cosine_decay(args.learning_rate, step_per_epoch,
-                                   args.epochs)
+                                    args.epochs)
 
-    train_prog, startup_prog, modelp_prog, modelm_prog, arch_prog, out_prog, fetch = architect.compute_unrolled_step(image_train, label_train, image_val,
-                        label_val, train_prog, startup_prog, learning_rate, args)
+    print("date define done", time.time())
+    umodel_prog = config_prog.clone()
+    modelp_prog = config_prog.clone()
+    modelm_prog, model_prog, arch_prog, out_prog, fetch = architect.compute_unrolled_step(image_train, label_train, image_val,
+                        label_val, config_prog, umodel_prog, modelp_prog, startup_prog, learning_rate, args)
 
+    print("arch optimize done", time.time())
     with fluid.program_guard(out_prog, startup_prog):
         with fluid.unique_name.guard():
             train_logits, train_loss = model(image_train, label_train, args.init_channels,
@@ -113,6 +124,8 @@ def main(args):
 
             model_var = utility.get_parameters(out_prog.global_block().all_parameters(), 'model')[1]
             # update model_var with gradientclip
+            follower_opt = fluid.optimizer.MomentumOptimizer(learning_rate, args.momentum)
+            #follower_opt.minimize(train_loss, parameter_list=model_var)
             follower_grads = fluid.gradients(train_loss, model_var)
             fluid.clip.set_gradient_clip(
                 clip=fluid.clip.GradientClipByGlobalNorm(clip_norm=5.0),
@@ -121,14 +134,17 @@ def main(args):
             follower_opt = fluid.optimizer.MomentumOptimizer(learning_rate, args.momentum)
             follower_opt.apply_gradients(params_grads)
 
-
+    print("construct graph done", time.time())
     test_prog = test_prog.clone(for_test=True)
     place = fluid.CUDAPlace(0) if args.use_gpu else fluid.CPUPlace()
     exe = fluid.Executor(place)
     exe.run(startup_prog)
 
-    train_reader = reader.train_val(args, batch_size_per_device, args.train_portion, is_shuffle)
-    py_reader.decorate_paddle_reader(train_reader)
+    if args.use_pyreader == True:
+        train_reader = reader.train_val(args, batch_size_per_device, args.train_portion, is_shuffle)
+        py_reader.decorate_paddle_reader(train_reader)
+    else:
+        batches = reader.train_val(args, batch_size_per_device, args.train_portion, is_shuffle)
 
     exec_strategy = fluid.ExecutionStrategy()
     exec_strategy.num_threads = 4
@@ -140,7 +156,7 @@ def main(args):
         #train_top5.persistable = True
         build_strategy.enable_inplace = True
         build_strategy.memory_optimize = True
-    train_prog = fluid.CompiledProgram(train_prog).with_data_parallel(
+    umodel_prog = fluid.CompiledProgram(umodel_prog).with_data_parallel(
                  loss_name=fetch[0].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
@@ -152,8 +168,12 @@ def main(args):
                  loss_name=fetch[2].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
-    arch_prog = fluid.CompiledProgram(arch_prog).with_data_parallel(
+    model_prog = fluid.CompiledProgram(model_prog).with_data_parallel(
                  loss_name=fetch[3].name,
+                 build_strategy=build_strategy,
+                 exec_strategy=exec_strategy)
+    arch_prog = fluid.CompiledProgram(arch_prog).with_data_parallel(
+                 loss_name=fetch[4].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
     out_prog = fluid.CompiledProgram(out_prog).with_data_parallel(
@@ -191,30 +211,51 @@ def main(args):
         print("Epoch {0}, top1 {1}, top5 {2}".format(epoch_id, top1.avg, top5.avg))
 
 
-    fetch_list = [train_loss, train_top1, train_top5]
+    fetch_list = [learning_rate, train_loss, train_top1, train_top5]
     loss = utility.AvgrageMeter()
     top1 = utility.AvgrageMeter()
     top5 = utility.AvgrageMeter()
     for epoch_id in range(args.epochs):
-        py_reader.start()
-        step_id = 0
-        try:
-            while True:
-                _ = exe.run(train_prog, fetch_list=[fetch[0].name])
-                _ = exe.run(modelp_prog, fetch_list=[fetch[1].name])
-                _ = exe.run(modelm_prog, fetch_list=[fetch[2].name])
-                _ = exe.run(arch_prog, fetch_list=[fetch[3].name])
-                loss_v, top1_v, top5_v = exe.run(out_prog, fetch_list = [v.name for v in fetch_list])
+        if args.use_pyreader:
+            py_reader.start()
+            step_id = 0
+            try:
+                while True:
+                    _ = exe.run(train_prog, fetch_list=[fetch[0].name])
+                    _ = exe.run(modelp_prog, fetch_list=[fetch[1].name])
+                    _ = exe.run(modelm_prog, fetch_list=[fetch[2].name])
+                    _ = exe.run(arch_prog, fetch_list=[fetch[3].name])
+                    loss_v, top1_v, top5_v = exe.run(out_prog, fetch_list = [v.name for v in fetch_list])
+                    loss.update(np.array(loss_v), args.batch_size)
+                    top1.update(np.array(top1_v), args.batch_size)
+                    top5.update(np.array(top5_v), args.batch_size)
+                    print("Epoch {}, Step {}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}".format(epoch_id, step_id, loss.avg[0], top1.avg[0], top5.avg[0]))
+                    step_id += 1
+                    sys.stdout.flush()
+            except (fluid.core.EOFException):
+                py_reader.reset()
+                break
+            # infer(epoch_id)
+        else:
+            for step_id in range(step_per_epoch):
+                image_train, label_train, image_val, label_val = next(batches())
+                #print(image_train)
+                #print(label_train)
+                feed = {"image_train": image_train, "label_train": label_train, "image_val": image_val, "label_val": label_val}
+                _ = exe.run(umodel_prog, feed=feed, fetch_list=[fetch[0].name])
+                _ = exe.run(modelp_prog, feed=feed, fetch_list=[fetch[1].name])
+                _ = exe.run(modelm_prog, feed=feed, fetch_list=[fetch[2].name])
+                _ = exe.run(model_prog, feed=feed, fetch_list=[fetch[3].name])
+                _ = exe.run(arch_prog, feed=feed, fetch_list=[fetch[4].name])
+                lr_v, loss_v, top1_v, top5_v = exe.run(out_prog, feed=feed, fetch_list=[v.name for v in fetch_list])
                 loss.update(np.array(loss_v), args.batch_size)
+                #loss = np.array(loss_v)
                 top1.update(np.array(top1_v), args.batch_size)
                 top5.update(np.array(top5_v), args.batch_size)
-                print("Epoch {}, Step {}, loss {}, acc_1 {}, acc_5 {}".format(epoch_id, step_id, loss.avg[0], top1.avg[0], top5.avg[0]))
-                step_id += 1
-                sys.stdout.flush()
-        except (fluid.core.EOFException):
-            py_reader.reset()
-            break
-        # infer(epoch_id)
+                lr = np.array(lr_v)
+                print("Epoch {}, Step {}, Lr {:.3f}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}".format(epoch_id, step_id, lr[0], loss.avg[0], top1.avg[0], top5.avg[0]))
+            # infer(epoch_id)
+
 
 
 if __name__ == '__main__':

@@ -14,6 +14,7 @@
 
 import os
 import sys
+import time
 import numpy as np
 import paddle.fluid as fluid
 from paddle.fluid.param_attr import ParamAttr
@@ -219,6 +220,8 @@ def relu_conv_bn(x, c_out, kernel_size, stride, padding, affine=True,
         padding=padding,
         param_attr=fluid.ParamAttr(name=name + "/" + "rcb_conv"),
         bias_attr=False)
+    begin = time.time()
     gama, beta = bn_param_config(name, affine, "rcb_bn")
     x = fluid.layers.batch_norm(x, param_attr=gama, bias_attr=beta)
+    print("bn takes:", time.time() - begin)
     return x

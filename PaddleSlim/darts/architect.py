@@ -23,12 +23,11 @@ from model_search import model
 
 
 def compute_unrolled_step(image_train, label_train, image_val, label_val,
-                          train_prog, startup_prog, lr, args):
+                          config_prog, umodel_prog, modelp_prog, startup_prog,
+                          lr, args):
     fetch = []
-    modelp_prog = fluid.Program()
-    modelm_prog = fluid.Program()
-    arch_prog = fluid.Program()
-    with fluid.program_guard(train_prog, startup_prog):
+    print("umodel_prog begin", time.time())
+    with fluid.program_guard(umodel_prog, startup_prog):
         with fluid.unique_name.guard():
             # construct model graph
             train_logits, train_loss = model(
@@ -38,6 +37,7 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
                 args.class_num,
                 args.layers,
                 name="model")
+            print("model define done", time.time())
             # construct unrolled model graph
             logits, unrolled_train_loss = model(
                 image_train,
@@ -46,10 +46,10 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
                 args.class_num,
                 args.layers,
                 name="unrolled_model")
+            print("unrolled model define done", time.time())
 
-            all_params = train_prog.global_block().all_parameters()
+            all_params = umodel_prog.global_block().all_parameters()
             model_var = utility.get_parameters(all_params, 'model')[1]
-            arch_var = utility.get_parameters(all_params, 'arch')[1]
             unrolled_model_var = utility.get_parameters(all_params,
                                                         'unrolled_model')[1]
 
@@ -61,7 +61,22 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
             unrolled_optimizer = fluid.optimizer.SGDOptimizer(lr)
             unrolled_optimizer.minimize(
                 unrolled_train_loss, parameter_list=unrolled_model_var)
+            print("unrolled model minimize done", time.time())
+            fetch.append(unrolled_train_loss)
+    print("umodel_prog done", time.time())
+    print("=" * 50)
 
+    print("modelp_prog begin", time.time())
+    with fluid.program_guard(modelp_prog, startup_prog):
+        with fluid.unique_name.guard():
+            logits, train_loss = model(
+                image_train,
+                label_train,
+                args.init_channels,
+                args.class_num,
+                args.layers,
+                name="model")
+            print("model define done", time.time())
             # get updated unrolled_valid_loss: L_val(w', a)
             logits, unrolled_valid_loss = model(
                 image_val,
@@ -70,10 +85,16 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
                 args.class_num,
                 args.layers,
                 name="unrolled_model")
+            print("unrolled model define done", time.time())
 
+            all_params = modelp_prog.global_block().all_parameters()
+            model_var = utility.get_parameters(all_params, 'model')[1]
+            unrolled_model_var = utility.get_parameters(all_params,
+                                                        'unrolled_model')[1]
             # get unrolled_valid_loss grad: \nabla{w'}L_val(w', a)
             valid_grads = fluid.gradients(unrolled_valid_loss,
                                           unrolled_model_var)
+            print("unrolled model grad done", time.time())
 
             # get \epsilion(eq. 10-11): 0.01/global_norm(valid_grads)
             squared_valid_grads = [
@@ -84,35 +105,17 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
                 fluid.layers.sums(squared_valid_grads))
 
             params_grads = list(zip(model_var, valid_grads))
+            modelm_prog = modelp_prog.clone()
+
             # w+ = w + eps*dw`
             # get \nabla{a}L_train(w+, a)
             optimizer_pos = fluid.optimizer.SGDOptimizer(eps)
-            modelp_prog = train_prog.clone()
             optimizer_pos.apply_gradients(params_grads)
+            print("unrolled model apply_grad done", time.time())
             fetch.append(unrolled_valid_loss)
-
-    with fluid.program_guard(modelp_prog, startup_prog):
-        with fluid.unique_name.guard():
-            logits, train_loss = model(
-                image_train,
-                label_train,
-                args.init_channels,
-                args.class_num,
-                args.layers,
-                name="model")
-
-            arch_var = utility.get_parameters(
-                modelp_prog.global_block().all_parameters(), 'arch')[1]
-
-            train_grads_pos = fluid.gradients(train_loss, arch_var)
-
-            # w- = w - eps*dw`"""
-            # get \nabla{a}L_train(w-, a)
-            optimizer_neg = fluid.optimizer.SGDOptimizer(-2 * eps)
-            modelm_prog = modelp_prog.clone()
-            optimizer_neg.apply_gradients(params_grads)
-            fetch.append(train_loss)
-
+    print("modelp_prog done", time.time())
+    print("=" * 50)
+    print("modelm_prog begin", time.time())
     with fluid.program_guard(modelm_prog, startup_prog):
         with fluid.unique_name.guard():
             logits, train_loss = model(
@@ -122,32 +125,70 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
                 args.class_num,
                 args.layers,
                 name="model")
+            print("model define done", time.time())
 
             arch_var = utility.get_parameters(
                 modelm_prog.global_block().all_parameters(), 'arch')[1]
 
+            train_grads_pos = fluid.gradients(train_loss, arch_var)
+            print("model grad done", time.time())
+            model_prog = modelm_prog.clone()
+
+            # w- = w - eps*dw`"""
+            # get \nabla{a}L_train(w-, a)
+            optimizer_neg = fluid.optimizer.SGDOptimizer(-2 * eps)
+            optimizer_neg.apply_gradients(params_grads)
+            print("model apply_grad done", time.time())
+            fetch.append(train_loss)
+    print("modelm_prog done", time.time())
+    print("=" * 50)
+
+    print("model_prog begin", time.time())
+    with fluid.program_guard(model_prog, startup_prog):
+        with fluid.unique_name.guard():
+            logits, train_loss = model(
+                image_train,
+                label_train,
+                args.init_channels,
+                args.class_num,
+                args.layers,
+                name="model")
+            print("model define done", time.time())
+
+            arch_var = utility.get_parameters(
+                model_prog.global_block().all_parameters(), 'arch')[1]
+
             train_grads_neg = fluid.gradients(train_loss, arch_var)
+            print("model grad done", time.time())
+            arch_prog = model_prog.clone()
             # recover w
             optimizer_back = fluid.optimizer.SGDOptimizer(eps)
-            arch_prog = modelm_prog.clone()
             optimizer_back.apply_gradients(params_grads)
+            print("model apply_grad done", time.time())
             fetch.append(train_loss)
+    print("model_prog done", time.time())
+    print("=" * 50)
 
+    print("arch_prog begin", time.time())
     with fluid.program_guard(arch_prog, startup_prog):
         with fluid.unique_name.guard():
             leader_opt = fluid.optimizer.Adam(args.arch_learning_rate, 0.5,
                                               0.999)
             leader_grads = leader_opt.backward(
                 unrolled_valid_loss, parameter_list=arch_var)
+            print("leader grad done", time.time())
 
             # get final a'grad(eq. 13)
             for i, (var, grad) in enumerate(leader_grads):
-                leader_grads[i] = (var, (
-                    grad - args.learning_rate * fluid.layers.elementwise_div(
-                        train_pos[i] - train_neg[i], 2 * eps)))
+                leader_grads[i] = (var,
+                                   (grad - lr * fluid.layers.elementwise_div(
+                                       train_pos[i] - train_neg[i], 2 * eps)))
             out_prog = arch_prog.clone()
             leader_opt.apply_gradients(leader_grads)
+            print("leader apply_grad done", time.time())
 
             fetch.append(unrolled_valid_loss)
+    print("arch_prog done", time.time())
+    print("=" * 50)
 
-    return train_prog, startup_prog, modelp_prog, modelm_prog, arch_prog, out_prog, fetch
+    return modelm_prog, model_prog, arch_prog, out_prog, fetch
