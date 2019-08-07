@@ -80,8 +80,8 @@ def main(args):
 
     startup_prog = fluid.Program()
     config_prog = fluid.Program()
-    umodel_prog = fluid.Program()
-    modelp_prog = fluid.Program()
+    forward_prog = fluid.Program()
+
     test_prog = fluid.Program()
 
     image_shape = [int(m) for m in args.image_shape.split(",")]
@@ -109,12 +109,14 @@ def main(args):
                                     args.epochs)
 
     print("date define done", time.time())
-    umodel_prog = config_prog.clone()
-    modelp_prog = config_prog.clone()
-    modelm_prog, model_prog, arch_prog, out_prog, fetch = architect.compute_unrolled_step(image_train, label_train, image_val,
-                        label_val, config_prog, umodel_prog, modelp_prog, startup_prog, learning_rate, args)
+
+    forward_prog = config_prog.clone()
+    unrolled_train_prog, modelp_prog, modelm_prog, model_prog, arch_prog, fetch = architect.compute_unrolled_step(image_train, label_train, image_val,
+                        label_val, forward_prog, startup_prog, learning_rate, args)
 
     print("arch optimize done", time.time())
+
+    out_prog = config_prog.clone()
     with fluid.program_guard(out_prog, startup_prog):
         with fluid.unique_name.guard():
             train_logits, train_loss = model(image_train, label_train, args.init_channels,
@@ -156,7 +158,7 @@ def main(args):
         #train_top5.persistable = True
         build_strategy.enable_inplace = True
         build_strategy.memory_optimize = True
-    umodel_prog = fluid.CompiledProgram(umodel_prog).with_data_parallel(
+    unrolled_train_prog = fluid.CompiledProgram(unrolled_train_prog).with_data_parallel(
                  loss_name=fetch[0].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
@@ -188,27 +190,27 @@ def main(args):
         print('save models to %s' % (model_path))
         fluid.io.save_persistables(exe, model_path, main_program=program)
 
-    def infer(epoch_id):
-        infer_logits, infer_loss = model(image_val, label_val, args.init_channels,args.class_num,args.layers)
-        infer_top1 = fluid.layers.accuracy(input=infer_logits, label = label_train, k=1)
-        infer_top5 = fluid.layers.accuracy(input=infer_logits, label = label_train, k=5)
-        test_fetch_list = [infer_loss, infer_top1, infer_top5]
-        loss = utility.AvgrageMeter()
-        top1 = utility.AvgrageMeter()
-        top5 = utility.AvgrageMeter()
-        py_reader.start()
-        step_id = 0
-        try:
-            while True:
-                loss_v, top1_v, top5 = exe.run(test_prog, fetch_list=test_fetch_list)
-                loss.update(np.array(loss_v), args.batch_size)
-                top1.update(np.array(top1_v), args.batch_size)
-                top5.update(np.array(top5_v), args.batch_size)
-                print("Epoch {}, Step {}, loss {}, acc_1 {}, acc_5 {}".format(epoch_id, step_id, loss.avg, top1.avg, top5.avg))
-                step_id += 1
-        except fluid.core.EOFException:
-            py_reader.reset()
-        print("Epoch {0}, top1 {1}, top5 {2}".format(epoch_id, top1.avg, top5.avg))
+    # def infer(epoch_id):
+    #     infer_logits, infer_loss = model(image_val, label_val, args.init_channels,args.class_num,args.layers)
+    #     infer_top1 = fluid.layers.accuracy(input=infer_logits, label = label_train, k=1)
+    #     infer_top5 = fluid.layers.accuracy(input=infer_logits, label = label_train, k=5)
+    #     test_fetch_list = [infer_loss, infer_top1, infer_top5]
+    #     loss = utility.AvgrageMeter()
+    #     top1 = utility.AvgrageMeter()
+    #     top5 = utility.AvgrageMeter()
+    #     py_reader.start()
+    #     step_id = 0
+    #     try:
+    #         while True:
+    #             loss_v, top1_v, top5 = exe.run(test_prog, fetch_list=test_fetch_list)
+    #             loss.update(np.array(loss_v), args.batch_size)
+    #             top1.update(np.array(top1_v), args.batch_size)
+    #             top5.update(np.array(top5_v), args.batch_size)
+    #             print("Epoch {}, Step {}, loss {}, acc_1 {}, acc_5 {}".format(epoch_id, step_id, loss.avg, top1.avg, top5.avg))
+    #             step_id += 1
+    #     except fluid.core.EOFException:
+    #         py_reader.reset()
+    #     print("Epoch {0}, top1 {1}, top5 {2}".format(epoch_id, top1.avg, top5.avg))
 
 
     fetch_list = [learning_rate, train_loss, train_top1, train_top5]
@@ -221,7 +223,7 @@ def main(args):
             step_id = 0
             try:
                 while True:
-                    _ = exe.run(train_prog, fetch_list=[fetch[0].name])
+                    _ = exe.run(unrolled_train_prog, fetch_list=[fetch[0].name])
                     _ = exe.run(modelp_prog, fetch_list=[fetch[1].name])
                     _ = exe.run(modelm_prog, fetch_list=[fetch[2].name])
                     _ = exe.run(arch_prog, fetch_list=[fetch[3].name])
@@ -242,7 +244,7 @@ def main(args):
                 #print(image_train)
                 #print(label_train)
                 feed = {"image_train": image_train, "label_train": label_train, "image_val": image_val, "label_val": label_val}
-                _ = exe.run(umodel_prog, feed=feed, fetch_list=[fetch[0].name])
+                _ = exe.run(unrolled_train_prog, feed=feed, fetch_list=[fetch[0].name])
                 _ = exe.run(modelp_prog, feed=feed, fetch_list=[fetch[1].name])
                 _ = exe.run(modelm_prog, feed=feed, fetch_list=[fetch[2].name])
                 _ = exe.run(model_prog, feed=feed, fetch_list=[fetch[3].name])
