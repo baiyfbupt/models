@@ -93,7 +93,9 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
             optimizer_pos = fluid.optimizer.SGDOptimizer(eps)
             optimizer_pos.apply_gradients(params_grads)
             arch_var = utility.get_parameters(
-                modelp_prog.global_block().all_parameters(), 'arch')[1]
+                forward_prog.global_block().all_parameters(), 'arch')[1]
+            #train_loss = modelp_prog.global_block().var(train_loss.name)
+            print(train_loss)
             train_grads_pos = fluid.gradients(train_loss, arch_var)
             fetch.append(unrolled_valid_loss)  # 1
 
@@ -103,7 +105,8 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
             optimizer_neg = fluid.optimizer.SGDOptimizer(-2 * eps)
             optimizer_neg.apply_gradients(params_grads)
             arch_var = utility.get_parameters(
-                modelm_prog.global_block().all_parameters(), 'arch')[1]
+                forward_prog.global_block().all_parameters(), 'arch')[1]
+            print(train_loss)
             train_grads_neg = fluid.gradients(train_loss, arch_var)
             fetch.append(unrolled_valid_loss)  # 2
 
@@ -123,14 +126,19 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
                                               0.999)
             leader_grads = leader_opt.backward(
                 unrolled_valid_loss, parameter_list=arch_var)
-            train_grads_pos = modelp_prog.global_block._clone_variable(
-                train_grads_pos, force_persistable=False)
-            train_grads_neg = modelm_prog.global_block._clone_variable(
-                train_grads_neg, force_persistable=False)
+
+            grads_pos = [
+                modelp_prog.global_block()._clone_variable(
+                    g, force_persistable=False) for g in train_grads_pos
+            ]
+            grads_neg = [
+                modelp_prog.global_block()._clone_variable(
+                    g, force_persistable=False) for g in train_grads_neg
+            ]
             for i, (var, grad) in enumerate(leader_grads):
-                leader_grads[i] = (var, (
-                    grad - lr * fluid.layers.elementwise_div(
-                        train_grads_pos[i] - train_grads_neg[i], 2 * eps)))
+                leader_grads[i] = (var,
+                                   (grad - lr * fluid.layers.elementwise_div(
+                                       grads_pos[i] - grads_neg[i], 2 * eps)))
             leader_opt.apply_gradients(leader_grads)
             fetch.append(unrolled_valid_loss)  # 4
 

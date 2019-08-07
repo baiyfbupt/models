@@ -108,11 +108,11 @@ def main(args):
             learning_rate = fluid.layers.cosine_decay(args.learning_rate, step_per_epoch,
                                     args.epochs)
 
-    print("date define done", time.time())
+    print("data define done", time.time())
 
     forward_prog = config_prog.clone()
     unrolled_train_prog, modelp_prog, modelm_prog, model_prog, arch_prog, fetch = architect.compute_unrolled_step(image_train, label_train, image_val,
-                        label_val, forward_prog, startup_prog, learning_rate, args)
+                        label_val, forward_prog, startup_prog, args.learning_rate, args)
 
     print("arch optimize done", time.time())
 
