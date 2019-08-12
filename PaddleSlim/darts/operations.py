@@ -223,5 +223,5 @@ def relu_conv_bn(x, c_out, kernel_size, stride, padding, affine=True,
     begin = time.time()
     gama, beta = bn_param_config(name, affine, "rcb_bn")
     x = fluid.layers.batch_norm(x, param_attr=gama, bias_attr=beta)
-    print("bn takes:", time.time() - begin)
+    #print("bn takes:", time.time() - begin)
     return x
