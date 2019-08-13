@@ -24,6 +24,7 @@ import random
 import _pickle as cPickle
 import numpy as np
 from PIL import Image
+import paddle
 
 IMAGE_SIZE = 32
 IMAGE_DEPTH = 3
@@ -65,27 +66,8 @@ def preprocess(sample, is_training, args):
     return img
 
 
-def reader_generator(filename, sub_name, batch_size, is_training, args,
-                     train_portion, is_shuffle):
-    files = os.listdir(filename)
-    names = [each_item for each_item in files if sub_name in each_item]
-    names.sort()
-    datasets = []
-    for name in names:
-        print("Reading file " + name)
-        batch = cPickle.load(
-            open(os.path.join(filename, name), 'rb'), encoding='iso-8859-1')
-        data = batch['data']
-        labels = batch.get('labels', batch.get('fine_labels', None))
-        assert labels is not None
-        dataset = zip(data, labels)
-        datasets.extend(dataset)
-    if is_shuffle:
-        random.shuffle(datasets)
-    split_point = int(np.floor(train_portion * len(datasets)))
-    train_datasets = datasets[:split_point]
-    val_datasets = datasets[split_point:]
-
+def reader_generator(train_datasets, val_datasets, batch_size, is_training,
+                     args):
     def read_batch(datasets, args):
         for im, label in datasets:
             im = preprocess(im, is_training, args)
@@ -129,6 +111,38 @@ def train_val(args, batch_size, train_portion=1, is_shuffle=True):
     :return: Training reader creator
     :rtype: callable
     """
-
-    return reader_generator(args.data, 'data_batch', batch_size, True, args,
-                            train_portion, is_shuffle)
+    files = os.listdir(args.data)
+    names = [each_item for each_item in files if 'data_batch' in each_item]
+    names.sort()
+    datasets = []
+    for name in names:
+        print("Reading file " + name)
+        batch = cPickle.load(
+            open(os.path.join(args.data, name), 'rb'), encoding='iso-8859-1')
+        data = batch['data']
+        labels = batch.get('labels', batch.get('fine_labels', None))
+        assert labels is not None
+        dataset = zip(data, labels)
+        datasets.extend(dataset)
+    if is_shuffle:
+        random.shuffle(datasets)
+    split_point = int(np.floor(train_portion * len(datasets)))
+    train_datasets = datasets[:split_point]
+    val_datasets = datasets[split_point:]
+    readers = []
+    n = int(math.ceil(len(train_datasets) // args.num_workers)
+            ) if args.use_multiprocess_reader else len(train_datasets)
+    train_datasets_lists = [
+        train_datasets[i:i + n] for i in range(0, len(train_datasets), n)
+    ]
+    val_datasets_lists = [
+        val_datasets[i:i + n] for i in range(0, len(val_datasets), n)
+    ]
+    for data_list in zip(train_datasets_lists, val_datasets_lists):
+        readers.append(
+            reader_generator(data_list[0], data_list[1], batch_size, True,
+                             args))
+    if args.use_multiprocess_reader:
+        return paddle.reader.multiprocess_reader(readers, False)
+    else:
+        return readers[0]

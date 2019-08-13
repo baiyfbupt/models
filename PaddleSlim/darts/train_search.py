@@ -57,6 +57,8 @@ add_arg = functools.partial(utility.add_arguments, argparser=parser)
 
 # yapf: disable
 add_arg('parallel',          bool,  True,            "Whether use multi-GPU/threads or not.")
+add_arg('use_multiprocess_reader', bool,  True,      "Whether use multiprocess reader or not.")
+add_arg('num_workers',       int,   8,               "The multiprocess reader number.")
 add_arg('data',              str,   './data/cifar-10-batches-py', "The dir of dataset.")
 add_arg('batch_size',        int,   16,              "Minibatch size.")
 add_arg('learning_rate',     float, 0.025,           "The start learning rate.")
