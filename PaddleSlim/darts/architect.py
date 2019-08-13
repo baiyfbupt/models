@@ -65,8 +65,11 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
             regularization=fluid.regularizer.L2DecayRegularizer(
                 args.weight_decay))
         unrolled_optimizer.minimize(
-            unrolled_train_loss, parameter_list=unrolled_model_var)
+            unrolled_train_loss,
+            parameter_list=[v.name for v in unrolled_model_var])
         fetch.append(unrolled_train_loss)
+        print(time.asctime(time.localtime(time.time())),
+              "unrolled model optim done")
 
     eps_prog = data_prog.clone()
     with fluid.program_guard(eps_prog, startup_prog):
@@ -97,14 +100,14 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
                 fluid.layers.reduce_sum(fluid.layers.square(valid_grad))
                 for valid_grad in valid_grads
             ]))
-        params_grads = list(zip(model_var, valid_grads))
+        model_params_grads = list(zip(model_var, valid_grads))
 
     model_plus_prog = eps_prog.clone()
     with fluid.program_guard(model_plus_prog, startup_prog):
         # w+ = w + eps*dw`
         eps = model_plus_prog.global_block().var(eps.name)
         optimizer_pos = fluid.optimizer.SGDOptimizer(eps)
-        optimizer_pos.apply_gradients(params_grads)
+        optimizer_pos.apply_gradients(model_params_grads)
         print(time.asctime(time.localtime(time.time())), "w+ apply_grad done")
         fetch.append(unrolled_valid_loss)
 
@@ -121,8 +124,8 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
         arch_var = utility.get_parameters(
             pos_grad_prog.global_block().all_parameters(), 'arch')[1]
         train_grads_pos = fluid.gradients(train_loss, arch_var)
-        grads_pos = [fluid.layers.assign(v) for v in train_grads_pos]
-        for v in grads_pos:
+        grads_p = [fluid.layers.assign(v) for v in train_grads_pos]
+        for v in grads_p:
             v.persistable = True
         print(time.asctime(time.localtime(time.time())), "train_gards_pos")
         fetch.append(train_loss)
@@ -132,7 +135,7 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
         # w- = w - eps*dw`"""
         eps = model_minus_prog.global_block().var(eps.name)
         optimizer_neg = fluid.optimizer.SGDOptimizer(-2 * eps)
-        optimizer_neg.apply_gradients(params_grads)
+        optimizer_neg.apply_gradients(model_params_grads)
         print(time.asctime(time.localtime(time.time())), "w- apply_grad done")
         fetch.append(unrolled_valid_loss)
 
@@ -149,8 +152,8 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
         arch_var = utility.get_parameters(
             neg_grad_prog.global_block().all_parameters(), 'arch')[1]
         train_grads_neg = fluid.gradients(train_loss, arch_var)
-        grads_neg = [fluid.layers.assign(v) for v in train_grads_neg]
-        for v in grads_neg:
+        grads_n = [fluid.layers.assign(v) for v in train_grads_neg]
+        for v in grads_n:
             v.persistable = True
         print(time.asctime(time.localtime(time.time())), "train_gards_neg")
         fetch.append(train_loss)
@@ -168,8 +171,9 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
         #unrolled_valid_loss = arch_optim_prog.global_block().var(unrolled_valid_loss.name)
         eps = arch_optim_prog.global_block().var(eps.name)
         optimizer_back = fluid.optimizer.SGDOptimizer(eps)
-        optimizer_back.apply_gradients(params_grads)
+        optimizer_back.apply_gradients(model_params_grads)
         print(time.asctime(time.localtime(time.time())), "w apply_grad done")
+
         arch_var = utility.get_parameters(
             arch_optim_prog.global_block().all_parameters(), 'arch')[1]
         leader_opt = fluid.optimizer.Adam(
@@ -178,26 +182,24 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
             0.999,
             regularization=fluid.regularizer.L2DecayRegularizer(
                 args.arch_weight_decay))
-        leader_grads = leader_opt.backward(
+        arch_params_grads = leader_opt.backward(
             unrolled_valid_loss, parameter_list=[v.name for v in arch_var])
         print(time.asctime(time.localtime(time.time())), "leader grad done")
 
-        arch_grads_pos = [
+        grads_p = [
             arch_optim_prog.global_block()._clone_variable(
-                pos_grad_prog.global_block().var(v.name),
-                force_persistable=True) for v in grads_pos
+                pos_grad_prog.global_block().var(v.name)) for v in grads_p
         ]
-        arch_grads_neg = [
+        grads_n = [
             arch_optim_prog.global_block()._clone_variable(
-                neg_grad_prog.global_block().var(v.name),
-                force_persistable=True) for v in grads_neg
+                neg_grad_prog.global_block().var(v.name)) for v in grads_n
         ]
 
         # get final a'grad(eq. 13)
-        for i, (var, grad) in enumerate(leader_grads):
-            leader_grads[i] = (var, grad - (
-                (arch_grads_pos[i] - arch_grads_neg[i]) / (2 * eps)) * lr)
-        leader_opt.apply_gradients(leader_grads)
+        for i, (var, grad) in enumerate(arch_params_grads):
+            arch_params_grads[i] = (var, grad - (
+                (grads_p[i] - grads_n[i]) / (2 * eps)) * lr)
+        leader_opt.apply_gradients(arch_params_grads)
         print(time.asctime(time.localtime(time.time())),
               "leader apply_grad done")
         fetch.append(unrolled_valid_loss)

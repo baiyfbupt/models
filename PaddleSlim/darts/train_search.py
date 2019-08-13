@@ -127,11 +127,11 @@ def main(args):
 
             model_var = utility.get_parameters(train_prog.global_block().all_parameters(), 'model')[1]
             # update model_var with gradientclip
-            follower_grads = fluid.gradients(train_loss, model_var)
+            model_grads = fluid.gradients(train_loss, model_var)
             fluid.clip.set_gradient_clip(
                 clip=fluid.clip.GradientClipByGlobalNorm(clip_norm=5.0),
                 param_list=model_var)
-            model_params_grads = list(zip(model_var, follower_grads))
+            model_params_grads = list(zip(model_var, model_grads))
             follower_opt = fluid.optimizer.MomentumOptimizer(learning_rate, args.momentum, regularization=fluid.regularizer.L2DecayRegularizer(args.weight_decay))
             follower_opt.apply_gradients(model_params_grads)
 
@@ -145,7 +145,7 @@ def main(args):
     batches = reader.train_val(args, batch_size_per_device, args.train_portion, is_shuffle)
 
     exec_strategy = fluid.ExecutionStrategy()
-    exec_strategy.num_threads = 1
+    exec_strategy.num_threads = 4
     build_strategy = fluid.BuildStrategy()
     if args.with_mem_opt:
         train_loss.persistable = True
@@ -175,7 +175,7 @@ def main(args):
         print('save models to %s' % (model_path))
         fluid.io.save_persistables(exe, model_path, main_program=program)
 
-    def valid(epoch_id, batches):
+    def valid(epoch_id, batches, test_prog):
         with fluid.program_guard(test_prog, startup_prog):
             with fluid.unique_name.guard():
                 image = fluid.layers.data(name="image", shape=image_shape, dtype="float32")
@@ -183,14 +183,14 @@ def main(args):
                 valid_logits, valid_loss = model(image, label, args.init_channels, args.class_num, args.layers, name='model')
                 valid_top1 = fluid.layers.accuracy(input=valid_logits, label=label, k=1)
                 valid_top5 = fluid.layers.accuracy(input=valid_logits, label=label, k=5)
-        test_fetch_list = [valid_loss, valid_top1, valid_top5]
+        valid_fetch_list = [valid_loss, valid_top1, valid_top5]
         loss = utility.AvgrageMeter()
         top1 = utility.AvgrageMeter()
         top5 = utility.AvgrageMeter()
         for step_id in range(step_per_epoch):
             _, _, image_val, label_val = next(batches())
             feed = {"image": image_val, "label": label_val}
-            loss_v, top1_v, top5_v = exe.run(test_prog, feed=feed, fetch_list=test_fetch_list)
+            loss_v, top1_v, top5_v = exe.run(test_prog, feed=feed, fetch_list=valid_fetch_list)
             loss.update(np.array(loss_v), args.batch_size)
             top1.update(np.array(top1_v), args.batch_size)
             top5.update(np.array(top5_v), args.batch_size)
@@ -218,7 +218,7 @@ def main(args):
             top5.update(np.array(top5_v), args.batch_size)
             lr = np.array(lr_v)
             print(time.asctime(time.localtime(time.time())), "Train Epoch {}, Step {}, Lr {:.3f}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}".format(epoch_id, step_id, lr[0], loss.avg[0], top1.avg[0], top5.avg[0]))
-        valid(epoch_id, batches)
+        valid(epoch_id, batches, test_prog)
 
 
 
