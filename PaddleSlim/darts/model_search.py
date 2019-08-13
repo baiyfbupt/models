@@ -23,6 +23,7 @@ import numpy as np
 import paddle.fluid as fluid
 from paddle.fluid.param_attr import ParamAttr
 from paddle.fluid.initializer import Normal
+import utility
 from genotypes import PRIMITIVES
 from genotypes import Genotype
 from operations import *
@@ -132,3 +133,40 @@ def model(x,
     train_loss = fluid.layers.reduce_mean(
         fluid.layers.softmax_with_cross_entropy(logits, y))
     return logits, train_loss
+
+
+def get_genotype(arch_names, arch_values, steps=4, multiplier=4):
+    def _parse(stride):
+        genotype = []
+        offset = 0
+        for i in range(steps):
+            edges = []
+            edges_confident = []
+            for j in range(i + 2):
+                value = arch_values[arch_names.index("arch/weight{}_{}".format(
+                    stride, offset + j))]
+                value_sorted = value.argsort()
+                max_index = value_sorted[-2] if value_sorted[
+                    -1] == PRIMITIVES.index('none') else value_sorted[-1]
+
+                edges.append((PRIMITIVES[max_index], j))
+                edges_confident.append(value[max_index])
+
+            edges_confident = np.array(edges_confident)
+            max_edges = [
+                edges[np.argsort(edges_confident)[-1]],
+                edges[np.argsort(edges_confident)[-2]]
+            ]
+            genotype.extend(max_edges)
+            offset += i + 2
+        return genotype
+
+    concat = list(range(2 + steps - multiplier, steps + 2))
+    gene_normal = _parse(1)
+    gene_reduce = _parse(2)
+    genotype = Genotype(
+        normal=gene_normal,
+        normal_concat=concat,
+        reduce=gene_reduce,
+        reduce_concat=concat)
+    return genotype

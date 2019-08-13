@@ -50,7 +50,7 @@ import paddle.fluid as fluid
 import reader
 import utility
 import architect
-from model_search import model
+from model_search import model, get_genotype
 
 parser = argparse.ArgumentParser(description=__doc__)
 add_arg = functools.partial(utility.add_arguments, argparser=parser)
@@ -100,6 +100,7 @@ def main(args):
 
     startup_prog = fluid.Program()
     data_prog = fluid.Program()
+    geno_prog = fluid.Program()
     test_prog = fluid.Program()
 
     image_shape = [int(m) for m in args.image_shape.split(",")]
@@ -120,14 +121,16 @@ def main(args):
 
         train_prog = data_prog.clone()
         with fluid.program_guard(train_prog, startup_prog):
-            train_logits, train_loss = model(image_train, label_train, args.init_channels,
+            logits, loss = model(image_train, label_train, args.init_channels,
                                              args.class_num, args.layers, name="model")
-            train_top1 = fluid.layers.accuracy(input=train_logits, label=label_train, k=1)
-            train_top5 = fluid.layers.accuracy(input=train_logits, label=label_train, k=5)
+            top1 = fluid.layers.accuracy(input=logits, label=label_train, k=1)
+            top5 = fluid.layers.accuracy(input=logits, label=label_train, k=5)
+
+            test_prog = train_prog.clone(for_test=True)
 
             model_var = utility.get_parameters(train_prog.global_block().all_parameters(), 'model')[1]
             # update model_var with gradientclip
-            model_grads = fluid.gradients(train_loss, model_var)
+            model_grads = fluid.gradients(loss, model_var)
             fluid.clip.set_gradient_clip(
                 clip=fluid.clip.GradientClipByGlobalNorm(clip_norm=5.0),
                 param_list=model_var)
@@ -136,7 +139,6 @@ def main(args):
             follower_opt.apply_gradients(model_params_grads)
 
     print(time.asctime( time.localtime(time.time())), "construct graph done")
-    test_prog = test_prog.clone(for_test=True)
     place = fluid.CUDAPlace(0) if args.use_gpu else fluid.CPUPlace()
     exe = fluid.Executor(place)
     exe.run(startup_prog)
@@ -148,22 +150,38 @@ def main(args):
     exec_strategy.num_threads = 4
     build_strategy = fluid.BuildStrategy()
     if args.with_mem_opt:
-        train_loss.persistable = True
-        train_top1.persistable = True
-        train_top5.persistable = True
+        loss.persistable = True
+        top1.persistable = True
+        top5.persistable = True
         build_strategy.enable_inplace = True
         build_strategy.memory_optimize = True
     '''
-    train_prog = fluid.CompiledProgram(train_prog).with_data_parallel(
-                 loss_name=train_loss.name,
-                 build_strategy=build_strategy,
-                 exec_strategy=exec_strategy)
-    pos_grad_prog = fluid.CompiledProgram(pos_grad_prog).with_data_parallel(
+    unrolled_optim_prog = fluid.CompiledProgram(unrolled_optim_prog).with_data_parallel(
                  loss_name=fetch[0].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
-    neg_grad_prog = fluid.CompiledProgram(neg_grad_prog).with_data_parallel(
+    model_plus_prog = fluid.CompiledProgram(model_plus_prog).with_data_parallel(
                  loss_name=fetch[1].name,
+                 build_strategy=build_strategy,
+                 exec_strategy=exec_strategy)
+    pos_grad_prog = fluid.CompiledProgram(pos_grad_prog).with_data_parallel(
+                 loss_name=fetch[2].name,
+                 build_strategy=build_strategy,
+                 exec_strategy=exec_strategy)
+    model_minus_prog = fluid.CompiledProgram(model_minus_prog).with_data_parallel(
+                 loss_name=fetch[3].name,
+                 build_strategy=build_strategy,
+                 exec_strategy=exec_strategy)
+    neg_grad_prog = fluid.CompiledProgram(neg_grad_prog).with_data_parallel(
+                 loss_name=fetch[4].name,
+                 build_strategy=build_strategy,
+                 exec_strategy=exec_strategy)
+    arch_optim_prog = fluid.CompiledProgram(arch_optim_prog).with_data_parallel(
+                 loss_name=fetch[5].name,
+                 build_strategy=build_strategy,
+                 exec_strategy=exec_strategy)
+    train_prog = fluid.CompiledProgram(train_prog).with_data_parallel(
+                 loss_name=loss.name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
     print(time.asctime( time.localtime(time.time())), "compile graph done")
@@ -175,34 +193,35 @@ def main(args):
         print('save models to %s' % (model_path))
         fluid.io.save_persistables(exe, model_path, main_program=program)
 
-    def valid(epoch_id, batches, test_prog):
-        with fluid.program_guard(test_prog, startup_prog):
-            with fluid.unique_name.guard():
-                image = fluid.layers.data(name="image", shape=image_shape, dtype="float32")
-                label = fluid.layers.data(name="label", shape=[1], dtype="int64")
-                valid_logits, valid_loss = model(image, label, args.init_channels, args.class_num, args.layers, name='model')
-                valid_top1 = fluid.layers.accuracy(input=valid_logits, label=label, k=1)
-                valid_top5 = fluid.layers.accuracy(input=valid_logits, label=label, k=5)
-        valid_fetch_list = [valid_loss, valid_top1, valid_top5]
+    def genotype(epoch_id, batches):
+        arch_names = utility.get_parameters(test_prog.global_block().all_parameters(), 'arch')[0]
+        image_train, label_train, image_val, label_val = next(batches())
+        feed = {"image_train": image_train, "label_train": label_train, "image_val": image_val, "label_val": label_val}
+        arch_values = exe.run(test_prog, feed=feed, fetch_list=arch_names)
+        genotype = get_genotype(arch_names, arch_values)
+        print("genotype={}".format(genotype))
+
+
+
+    def valid(epoch_id, batches, fetch_list):
         loss = utility.AvgrageMeter()
         top1 = utility.AvgrageMeter()
         top5 = utility.AvgrageMeter()
         for step_id in range(step_per_epoch):
             _, _, image_val, label_val = next(batches())
-            feed = {"image": image_val, "label": label_val}
+            # use valid data to feed image_train and label_train
+            feed = {"image_train": image_val, "label_train": label_val, "image_val": image_val, "label_val": label_val}
             loss_v, top1_v, top5_v = exe.run(test_prog, feed=feed, fetch_list=valid_fetch_list)
             loss.update(np.array(loss_v), args.batch_size)
             top1.update(np.array(top1_v), args.batch_size)
             top5.update(np.array(top5_v), args.batch_size)
             print(time.asctime(time.localtime(time.time())), "Valid Epoch {}, Step {}, loss {:.3f}, acc_1 {:.6f}, acc_5 {:.6f}".format(epoch_id, step_id, loss.avg[0], top1.avg[0], top5.avg[0]))
-        print(time.asctime(time.localtime(time.time())), "Epoch {}, top1 {:.6f}, top5 {:.6f}".format(epoch_id, top1.avg[0], top5.avg[0]))
+        return top1.avg[0]
 
-
-    fetch_list = [learning_rate, train_loss, train_top1, train_top5]
-    loss = utility.AvgrageMeter()
-    top1 = utility.AvgrageMeter()
-    top5 = utility.AvgrageMeter()
-    for epoch_id in range(args.epochs):
+    def train(epoch_id, batches, fetch, fetch_list):
+        loss = utility.AvgrageMeter()
+        top1 = utility.AvgrageMeter()
+        top5 = utility.AvgrageMeter()
         for step_id in range(step_per_epoch):
             image_train, label_train, image_val, label_val = next(batches())
             feed = {"image_train": image_train, "label_train": label_train, "image_val": image_val, "label_val": label_val}
@@ -218,8 +237,19 @@ def main(args):
             top5.update(np.array(top5_v), args.batch_size)
             lr = np.array(lr_v)
             print(time.asctime(time.localtime(time.time())), "Train Epoch {}, Step {}, Lr {:.3f}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}".format(epoch_id, step_id, lr[0], loss.avg[0], top1.avg[0], top5.avg[0]))
-        valid(epoch_id, batches, test_prog)
+        return top1.avg[0]
 
+
+    for epoch_id in range(args.epochs):
+        # get genotype
+        genotype(epoch_id, batches)
+        train_fetch_list = [learning_rate, loss, top1, top5]
+        train_top1 = train(epoch_id, batches, fetch, train_fetch_list)
+        print(time.asctime(time.localtime(time.time())), "Epoch {}, train_acc {:.6f}".format(epoch_id, train_top1))
+        valid_fetch_list = [loss, top1, top5]
+        valid_top1 = valid(epoch_id, batches, valid_fetch_list)
+        print(time.asctime(time.localtime(time.time())), "Epoch {}, valid_acc {:.6f}".format(epoch_id, valid_top1))
+        # save model
 
 
 if __name__ == '__main__':
