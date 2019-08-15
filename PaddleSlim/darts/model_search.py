@@ -37,7 +37,7 @@ def mixed_op(x, c_out, stride, index, reduction, name):
         dtype="float32",
         attr=param_attr,
         default_initializer=Normal(
-            loc=0, scale=1e-6))
+            loc=0.0, scale=1e-3))
     weight = fluid.layers.softmax(weight)
     ops = []
     index = 0
@@ -124,7 +124,7 @@ def model(x,
                           reduction_prev, name + "/l" + str(i))
         reduction_prev = reduction
     out = fluid.layers.pool2d(s1, pool_type='avg', global_pooling=True)
-    out = fluid.layers.reshape(out, [-1, 0])
+    out = fluid.layers.squeeze(out, axes=[2, 3])
     logits = fluid.layers.fc(
         out,
         num_classes,

@@ -40,12 +40,11 @@ def preprocess(sample, is_training, args):
     if is_training:
         # pad, ramdom crop, random_flip_left_right
         img = ImageOps.expand(img, (4, 4, 4, 4), fill=0)
-        left_top = np.random.randint(9, size=2)
-        img = img.crop((left_top[0], left_top[1], left_top[0] + IMAGE_SIZE,
-                        left_top[1] + IMAGE_SIZE))
+        left_top = np.random.randint(8, size=2)
+        img = img.crop((left_top[1], left_top[0], left_top[1] + IMAGE_SIZE,
+                        left_top[0] + IMAGE_SIZE))
         if np.random.randint(2):
             img = img.transpose(Image.FLIP_LEFT_RIGHT)
-
     img = np.array(img).astype(np.float32)
 
     img_float = img / 255.0
@@ -69,9 +68,13 @@ def preprocess(sample, is_training, args):
 def reader_generator(train_datasets, val_datasets, batch_size, is_training,
                      args):
     def read_batch(datasets, args):
-        for im, label in datasets:
+        data_id = 0
+        while True:
+            data_id = data_id % len(datasets)
+            im, label = datasets[data_id]
             im = preprocess(im, is_training, args)
             yield im, [int(label)]
+            data_id += 1
 
     def reader():
         train_batch_data = []
@@ -104,13 +107,7 @@ def reader_generator(train_datasets, val_datasets, batch_size, is_training,
 
 
 def train_val(args, batch_size, train_portion=1, is_shuffle=True):
-    """
-    CIFAR-10 training set creator.
-    It returns a reader creator, each sample in the reader is image pixels in
-    [0, 1] and label in [0, 9].
-    :return: Training reader creator
-    :rtype: callable
-    """
+
     files = os.listdir(args.data)
     names = [each_item for each_item in files if 'data_batch' in each_item]
     names.sort()
@@ -138,10 +135,12 @@ def train_val(args, batch_size, train_portion=1, is_shuffle=True):
     val_datasets_lists = [
         val_datasets[i:i + n] for i in range(0, len(val_datasets), n)
     ]
-    for data_list in zip(train_datasets_lists, val_datasets_lists):
+
+    for pid in range(len(train_datasets_lists)):
         readers.append(
-            reader_generator(data_list[0], data_list[1], batch_size, True,
-                             args))
+            reader_generator(train_datasets_lists[pid], val_datasets_lists[pid],
+                             batch_size, True, args))
+
     if args.use_multiprocess_reader:
         return paddle.reader.multiprocess_reader(readers, False)
     else:
