@@ -44,7 +44,7 @@ set_paddle_flags({
     'FLAGS_memory_fraction_of_eager_deletion': 1,
     'FLAGS_fast_eager_deletion_mode': 1,
     # Setting the default used gpu memory
-    'FLAGS_fraction_of_gpu_memory_to_use': 0.98
+    'FLAGS_fraction_of_gpu_memory_to_use': 0.92
 })
 
 import paddle.fluid as fluid
@@ -60,7 +60,7 @@ add_arg = functools.partial(utility.add_arguments, argparser=parser)
 # yapf: disable
 add_arg('profile',           bool,  False,           "Enable profiler.")
 add_arg('parallel',          bool,  True,            "Whether use multi-GPU/threads.")
-add_arg('use_multiprocess_reader', bool,  True,      "Whether use multiprocess reader.")
+add_arg('use_multiprocess',  bool,  True,      "Whether use multiprocess reader.")
 add_arg('num_workers',       int,   8,               "The multiprocess reader number.")
 add_arg('data',              str,   './data/cifar-10-batches-py', "The dir of dataset.")
 add_arg('batch_size',        int,   16,              "Minibatch size.")
@@ -105,7 +105,6 @@ def main(args):
 
     startup_prog = fluid.Program()
     data_prog = fluid.Program()
-    geno_prog = fluid.Program()
     test_prog = fluid.Program()
 
     image_shape = [int(m) for m in args.image_shape.split(",")]
@@ -130,25 +129,20 @@ def main(args):
                                              args.class_num, args.layers, name="model")
             top1 = fluid.layers.accuracy(input=logits, label=label_train, k=1)
             top5 = fluid.layers.accuracy(input=logits, label=label_train, k=5)
-
             test_prog = train_prog.clone(for_test=True)
 
             model_var = utility.get_parameters(train_prog.global_block().all_parameters(), 'model')[1]
             # update model_var with gradientclip
-            model_grads = fluid.gradients(loss, model_var)
             fluid.clip.set_gradient_clip(
                 clip=fluid.clip.GradientClipByGlobalNorm(clip_norm=5.0),
-                param_list=model_var)
-            model_params_grads = list(zip(model_var, model_grads))
+                param_list=[v.name for v in model_var])
             follower_opt = fluid.optimizer.MomentumOptimizer(learning_rate, args.momentum, regularization=fluid.regularizer.L2DecayRegularizer(args.weight_decay))
-            follower_opt.apply_gradients(model_params_grads)
+            follower_opt.minimize(loss, parameter_list=[v.name for v in model_var])
 
     print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), "construct graph done")
     place = fluid.CUDAPlace(0) if args.use_gpu else fluid.CPUPlace()
     exe = fluid.Executor(place)
     exe.run(startup_prog)
-    print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), "init done")
-
     batches = reader.train_val(args, batch_size_per_device, args.train_portion, is_shuffle)()
 
     exec_strategy = fluid.ExecutionStrategy()
@@ -160,31 +154,42 @@ def main(args):
         top5.persistable = True
         build_strategy.enable_inplace = True
         build_strategy.memory_optimize = True
-    '''
     unrolled_optim_prog = fluid.CompiledProgram(unrolled_optim_prog).with_data_parallel(
+                 loss_name=fetch[0].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
     model_plus_prog = fluid.CompiledProgram(model_plus_prog).with_data_parallel(
+                 loss_name=fetch[1].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
+    #share_vars_from=unrolled_optim_prog)
     pos_grad_prog = fluid.CompiledProgram(pos_grad_prog).with_data_parallel(
+                 loss_name=fetch[2].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
+    #share_vars_from=model_plus_prog)
     model_minus_prog = fluid.CompiledProgram(model_minus_prog).with_data_parallel(
+                 loss_name=fetch[3].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
+    #share_vars_from=model_plus_prog)
     neg_grad_prog = fluid.CompiledProgram(neg_grad_prog).with_data_parallel(
+                 loss_name=fetch[4].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
+    #share_vars_from=model_minus_prog)
     arch_optim_prog = fluid.CompiledProgram(arch_optim_prog).with_data_parallel(
+                 loss_name=fetch[5].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
+    #share_vars_from=model_minus_prog)
     train_prog = fluid.CompiledProgram(train_prog).with_data_parallel(
                  loss_name=loss.name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
+    #             share_vars_from=arch_optim_prog)
     print(time.asctime( time.localtime(time.time())), "compile graph done")
-    '''
+
     def save_model(postfix, program):
         model_path = os.path.join(model_save_dir, postfix)
         if os.path.isdir(model_path):
@@ -199,7 +204,6 @@ def main(args):
         arch_values = exe.run(test_prog, feed=feed, fetch_list=arch_names)
         # softmax
         arch_values = [np.exp(arch_v) / np.sum(np.exp(arch_v)) for arch_v in arch_values]
-
         alpha_normal = [i for i in zip(arch_names, arch_values) if 'weight1' in i[0]]
         alpha_reduce = [i for i in zip(arch_names, arch_values) if 'weight2' in i[0]]
         print([pair[1] for pair in sorted(alpha_normal, key=lambda i:int(i[0].split('_')[1]))])
@@ -229,9 +233,9 @@ def main(args):
         top5 = utility.AvgrageMeter()
         for step_id in range(step_per_epoch):
             if args.profile:
-                if epoch_id == 0 and step_id == 5:
+                if epoch_id == 0 and step_id == 1:
                     profiler.start_profiler("All")
-                elif epoch_id == 0 and step_id == 10:
+                elif epoch_id == 0 and step_id == 3:
                     profiler.stop_profiler("total", "/tmp/profile")
             image_train, label_train, image_val, label_val = next(batches)
             feed = {"image_train": image_train, "label_train": label_train, "image_val": image_val, "label_val": label_val}
@@ -258,7 +262,7 @@ def main(args):
         valid_fetch_list = [loss, top1, top5]
         valid_top1 = valid(epoch_id, batches, valid_fetch_list)
         print("Epoch {}, valid_acc {:.6f}".format(epoch_id, valid_top1))
-        # save model
+        # (TODO)save model
 
 
 if __name__ == '__main__':

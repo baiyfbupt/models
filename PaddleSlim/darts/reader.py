@@ -128,7 +128,7 @@ def train_val(args, batch_size, train_portion=1, is_shuffle=True):
     val_datasets = datasets[split_point:]
     readers = []
     n = int(math.ceil(len(train_datasets) // args.num_workers)
-            ) if args.use_multiprocess_reader else len(train_datasets)
+            ) if args.use_multiprocess else len(train_datasets)
     train_datasets_lists = [
         train_datasets[i:i + n] for i in range(0, len(train_datasets), n)
     ]
@@ -141,7 +141,7 @@ def train_val(args, batch_size, train_portion=1, is_shuffle=True):
             reader_generator(train_datasets_lists[pid], val_datasets_lists[pid],
                              batch_size, True, args))
 
-    if args.use_multiprocess_reader:
+    if args.use_multiprocess:
         return paddle.reader.multiprocess_reader(readers, False)
     else:
         return readers[0]
