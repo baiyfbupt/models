@@ -23,7 +23,6 @@ import numpy as np
 import paddle.fluid as fluid
 from paddle.fluid.param_attr import ParamAttr
 from paddle.fluid.initializer import Normal
-import utility
 from genotypes import PRIMITIVES
 from genotypes import Genotype
 from operations import *
@@ -129,7 +128,7 @@ def model(x,
         out,
         num_classes,
         param_attr=fluid.ParamAttr(name=name + "/" + "fc_weights"),
-        bias_attr=fluid.ParamAttr(name=name + "/" + "fc_bias"))
+        bias_attr=False)
     train_loss = fluid.layers.reduce_mean(
         fluid.layers.softmax_with_cross_entropy(logits, y))
     return logits, train_loss
