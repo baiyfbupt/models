@@ -95,8 +95,6 @@ if not os.path.isdir(output_dir):
 CIFAR10 = 50000
 
 def main(args):
-    model_save_dir = args.model_save_dir
-
     devices = os.getenv("CUDA_VISIBLE_DEVICES") or ""
     devices_num = len(devices.split(","))
     batch_size_per_device = args.batch_size // devices_num
@@ -143,7 +141,9 @@ def main(args):
     place = fluid.CUDAPlace(0) if args.use_gpu else fluid.CPUPlace()
     exe = fluid.Executor(place)
     exe.run(startup_prog)
-    batches = reader.train_val(args, batch_size_per_device, args.train_portion, is_shuffle)()
+    train_reader, valid_reader = reader.train_search(batch_size_per_device, args.train_portion, is_shuffle, args)
+    train_batches = train_reader()
+    valid_batches = valid_reader()
 
     exec_strategy = fluid.ExecutionStrategy()
     exec_strategy.num_threads = 4
@@ -191,16 +191,16 @@ def main(args):
     print(time.asctime( time.localtime(time.time())), "compile graph done")
 
     def save_model(postfix, program):
-        model_path = os.path.join(model_save_dir, postfix)
+        model_path = os.path.join(args.model_save_dir, postfix)
         if os.path.isdir(model_path):
             shutil.rmtree(model_path)
         print('save models to %s' % (model_path))
         fluid.io.save_persistables(exe, model_path, main_program=program)
 
-    def genotype(epoch_id, batches):
+    def genotype(epoch_id, train_batches):
         arch_names = utility.get_parameters(test_prog.global_block().all_parameters(), 'arch')[0]
-        image_train, label_train, image_val, label_val = next(batches)
-        feed = {"image_train": image_train, "label_train": label_train, "image_val": image_val, "label_val": label_val}
+        image_train, label_train = next(train_batches)
+        feed = {"image_train": image_train, "label_train": label_train, "image_val": image_train, "label_val": label_train}
         arch_values = exe.run(test_prog, feed=feed, fetch_list=arch_names)
         # softmax
         arch_values = [np.exp(arch_v) / np.sum(np.exp(arch_v)) for arch_v in arch_values]
@@ -212,12 +212,12 @@ def main(args):
         print("genotype={}".format(genotype))
 
 
-    def valid(epoch_id, batches, fetch_list):
+    def valid(epoch_id, valid_batches, fetch_list):
         loss = utility.AvgrageMeter()
         top1 = utility.AvgrageMeter()
         top5 = utility.AvgrageMeter()
         for step_id in range(step_per_epoch):
-            _, _, image_val, label_val = next(batches)
+            image_val, label_val = next(valid_batches)
             # use valid data to feed image_train and label_train
             feed = {"image_train": image_val, "label_train": label_val, "image_val": image_val, "label_val": label_val}
             loss_v, top1_v, top5_v = exe.run(test_prog, feed=feed, fetch_list=valid_fetch_list)
@@ -227,7 +227,7 @@ def main(args):
             print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), "Valid Epoch {}, Step {}, loss {:.3f}, acc_1 {:.6f}, acc_5 {:.6f}".format(epoch_id, step_id, loss.avg[0], top1.avg[0], top5.avg[0]))
         return top1.avg[0]
 
-    def train(epoch_id, batches, fetch_list):
+    def train(epoch_id, train_batches, valid_batches, fetch_list):
         loss = utility.AvgrageMeter()
         top1 = utility.AvgrageMeter()
         top5 = utility.AvgrageMeter()
@@ -237,7 +237,8 @@ def main(args):
                     profiler.start_profiler("All")
                 elif epoch_id == 0 and step_id == 3:
                     profiler.stop_profiler("total", "/tmp/profile")
-            image_train, label_train, image_val, label_val = next(batches)
+            image_train, label_train = next(train_batches)
+            image_val, label_val = next(valid_batches)
             feed = {"image_train": image_train, "label_train": label_train, "image_val": image_val, "label_val": label_val}
             exe.run(unrolled_optim_prog, feed=feed)
             exe.run(model_plus_prog, feed=feed)
@@ -255,12 +256,12 @@ def main(args):
 
     for epoch_id in range(args.epochs):
         # get genotype
-        genotype(epoch_id, batches)
+        genotype(epoch_id, train_batches)
         train_fetch_list = [learning_rate, loss, top1, top5]
-        train_top1 = train(epoch_id, batches, train_fetch_list)
+        train_top1 = train(epoch_id, train_batches, valid_batches, train_fetch_list)
         print("Epoch {}, train_acc {:.6f}".format(epoch_id, train_top1))
         valid_fetch_list = [loss, top1, top5]
-        valid_top1 = valid(epoch_id, batches, valid_fetch_list)
+        valid_top1 = valid(epoch_id, valid_batches, valid_fetch_list)
         print("Epoch {}, valid_acc {:.6f}".format(epoch_id, valid_top1))
         # (TODO)save model
 

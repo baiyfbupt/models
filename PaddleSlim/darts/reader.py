@@ -65,8 +65,7 @@ def preprocess(sample, is_training, args):
     return img
 
 
-def reader_generator(train_datasets, val_datasets, batch_size, is_training,
-                     args):
+def reader_generator(datasets, batch_size, is_training, args):
     def read_batch(datasets, args):
         data_id = 0
         while True:
@@ -77,39 +76,25 @@ def reader_generator(train_datasets, val_datasets, batch_size, is_training,
             data_id += 1
 
     def reader():
-        train_batch_data = []
-        train_batch_label = []
-        val_batch_data = []
-        val_batch_label = []
-        for train, val in zip(
-                read_batch(train_datasets, args),
-                read_batch(val_datasets, args)):
-            train_batch_data.append(train[0])
-            train_batch_label.append(train[1])
-            val_batch_data.append(val[0])
-            val_batch_label.append(val[1])
-            if len(train_batch_data) == batch_size:
-                train_batch_data = np.array(train_batch_data, dtype='float32')
-                train_batch_label = np.array(train_batch_label, dtype='int64')
-                val_batch_data = np.array(val_batch_data, dtype='float32')
-                val_batch_label = np.array(val_batch_label, dtype='int64')
-                batch_out = [
-                    train_batch_data, train_batch_label, val_batch_data,
-                    val_batch_label
-                ]
+        batch_data = []
+        batch_label = []
+        for data in read_batch(datasets, args):
+            batch_data.append(data[0])
+            batch_label.append(data[1])
+            if len(batch_data) == batch_size:
+                batch_data = np.array(batch_data, dtype='float32')
+                batch_label = np.array(batch_label, dtype='int64')
+                batch_out = [batch_data, batch_label]
                 yield batch_out
-                train_batch_data = []
-                train_batch_label = []
-                val_batch_data = []
-                val_batch_label = []
+                batch_data = []
+                batch_label = []
 
     return reader
 
 
-def train_val(args, batch_size, train_portion=1, is_shuffle=True):
-
+def cifar10_reader(data_name, is_shuffle, args):
     files = os.listdir(args.data)
-    names = [each_item for each_item in files if 'data_batch' in each_item]
+    names = [each_item for each_item in files if data_name in each_item]
     names.sort()
     datasets = []
     for name in names:
@@ -123,10 +108,17 @@ def train_val(args, batch_size, train_portion=1, is_shuffle=True):
         datasets.extend(dataset)
     if is_shuffle:
         random.shuffle(datasets)
+    return datasets
+
+
+def train_search(batch_size, train_portion, is_shuffle, args):
+
+    datasets = cifar10_reader('data_batch', is_shuffle, args)
     split_point = int(np.floor(train_portion * len(datasets)))
     train_datasets = datasets[:split_point]
     val_datasets = datasets[split_point:]
-    readers = []
+    train_readers = []
+    val_readers = []
     n = int(math.ceil(len(train_datasets) // args.num_workers)
             ) if args.use_multiprocess else len(train_datasets)
     train_datasets_lists = [
@@ -137,11 +129,33 @@ def train_val(args, batch_size, train_portion=1, is_shuffle=True):
     ]
 
     for pid in range(len(train_datasets_lists)):
-        readers.append(
-            reader_generator(train_datasets_lists[pid], val_datasets_lists[pid],
-                             batch_size, True, args))
-
+        train_readers.append(
+            reader_generator(train_datasets_lists[pid], batch_size, True, args))
+        val_readers.append(
+            reader_generator(val_datasets_lists[pid], batch_size, True, args))
     if args.use_multiprocess:
-        return paddle.reader.multiprocess_reader(readers, False)
+        reader = [
+            paddle.reader.multiprocess_reader(train_readers, False),
+            paddle.reader.multiprocess_reader(val_readers, False)
+        ]
     else:
-        return readers[0]
+        reader = [train_readers[0], val_readers[0]]
+
+    return reader
+
+
+def train_valid(batch_size, is_train, is_shuffle, args):
+    name = 'data_batch' if is_train else 'test_batch'
+    datasets = cifar10_reader(name, is_shuffle, args)
+    n = int(math.ceil(len(datasets) // args.
+                      num_workers)) if args.use_multiprocess else len(datasets)
+    datasets_lists = [datasets[i:i + n] for i in range(0, len(datasets), n)]
+    multi_readers = []
+    for pid in range(len(datasets_lists)):
+        multi_readers.append(
+            reader_generator(datasets_lists[pid], batch_size, is_train, args))
+    if args.use_multiprocess:
+        reader = paddle.reader.multiprocess_reader(multi_readers, False)
+    else:
+        reader = multi_readers[0]
+    return reader
