@@ -134,7 +134,7 @@ def train(main_prog, exe,  epoch_id, train_batches, fetch_list, args):
         if args.profile:
             if epoch_id == 0 and step_id == 5:
                 profiler.start_profiler("All")
-            elif epoch_id == 0 and step_id == 10:
+            elif epoch_id == 0 and step_id == 7:
                 profiler.stop_profiler("total", "/tmp/profile")
         image, label = next(train_batches)
         feed = {"image": image, "label": label}
@@ -144,7 +144,7 @@ def train(main_prog, exe,  epoch_id, train_batches, fetch_list, args):
         top5.update(top5_v, args.batch_size)
         if step_id % args.report_freq == 0:
             print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),\
-                "Train Epoch {}, Step {}, Lr {:.3f}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}"\
+                "Train Epoch {}, Step {}, Lr {:.8f}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}"\
                 .format(epoch_id, step_id, lr[0], loss.avg[0], top1.avg[0], top5.avg[0]))
     return top1.avg[0]
 

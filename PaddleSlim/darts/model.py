@@ -43,8 +43,8 @@ def cell(s0, s1, is_train, genotype, c_curr, reduction, reduction_prev,
         op_names, indices = zip(*genotype.reduce)
         concat = genotype.reduce_concat
     else:
-        op_names, indices = zip(*genotype.reduce)
-        concat = genotype.reduce_concat
+        op_names, indices = zip(*genotype.normal)
+        concat = genotype.normal_concat
     num_cells = len(op_names) // 2
     multiplier = len(concat)
 

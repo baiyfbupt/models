@@ -250,7 +250,7 @@ def main(args):
             loss.update(loss_v, args.batch_size)
             top1.update(top1_v, args.batch_size)
             top5.update(top5_v, args.batch_size)
-            print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), "Train Epoch {}, Step {}, Lr {:.3f}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}".format(epoch_id, step_id, lr[0], loss.avg[0], top1.avg[0], top5.avg[0]))
+            print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), "Train Epoch {}, Step {}, Lr {:.8f}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}".format(epoch_id, step_id, lr[0], loss.avg[0], top1.avg[0], top5.avg[0]))
         return top1.avg[0]
 
 
