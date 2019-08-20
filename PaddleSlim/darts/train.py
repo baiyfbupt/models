@@ -60,11 +60,10 @@ add_arg = functools.partial(utility.add_arguments, argparser=parser)
 add_arg('profile',           bool,  False,           "Enable profiler.")
 add_arg('parallel',          bool,  True,            "Whether use multi-GPU/threads.")
 add_arg('use_multiprocess',  bool,  True,            "Whether use multiprocess reader.")
-add_arg('num_workers',       int,   2,               "The multiprocess reader number.")
+add_arg('num_workers',       int,   4,               "The multiprocess reader number.")
 add_arg('data',              str,   './data/cifar-10-batches-py', "The dir of dataset.")
 add_arg('batch_size',        int,   96,              "Minibatch size.")
 add_arg('learning_rate',     float, 0.025,           "The start learning rate.")
-add_arg('learning_rate_min', float, 0.001,           "The min learning rate.")
 add_arg('momentum',          float, 0.9,             "Momentum.")
 add_arg('weight_decay',      float, 3e-4,            "Weight_decay.")
 add_arg('use_gpu',           bool,  True,            "Whether use GPU.")
@@ -77,14 +76,12 @@ add_arg('cutout',            bool,  True,            'Whether use cutout.')
 add_arg('cutout_length',     int,   16,              "Cutout length.")
 add_arg('auxiliary',         bool,  True,            'Use auxiliary tower.')
 add_arg('auxiliary_weight',  float, 0.4,             "Weight for auxiliary loss.")
-add_arg('drop_path_prob',    float, 0.2,             "Drop path probability.")
+add_arg('drop_path_prob',    float, 0.0,             "Drop path probability.")
 add_arg('save',              str,   'EXP',           "Experiment name.")
 add_arg('grad_clip',         float, 5,               "Gradient clipping.")
-add_arg('train_portion',     float, 0.5,             "Portion of training data.")
-add_arg('arch_learning_rate',float, 3e-4,            "Learning rate for arch encoding.")
-add_arg('arch_weight_decay', float, 1e-3,            "Weight decay for arch encoding.")
-add_arg('image_shape',       str,   "3,32,32",       "input image size")
-add_arg('arch',              str,   'DARTS',         "which architecture to use")
+add_arg('image_shape',       str,   "3,32,32",       "Input image size")
+add_arg('arch',              str,   'DARTS',         "Which architecture to use")
+add_arg('report_freq',       float, 50,              'Report frequency')
 add_arg('with_mem_opt',      bool,  False,           "Whether to use memory optimization or not.")
 #yapf: enable
 
@@ -103,7 +100,11 @@ def build_program(main_prog, startup_prog, is_train, args):
             image = fluid.layers.data(name="image", shape=image_shape, dtype="float32")
             label = fluid.layers.data(name="label", shape=[1], dtype="int64")
             genotype = eval("genotypes.%s" % args.arch)
-            logits, logits_aux = network(x=image, is_train=is_train, c_in=args.init_channels, num_classes=args.class_num, layers=args.layers, auxiliary=args.auxiliary,genotype=genotype, stem_multiplier=3, drop_prob=0, args=args, name='model')
+            logits, logits_aux = network(x=image, is_train=is_train,
+                c_in=args.init_channels, num_classes=args.class_num,
+                layers=args.layers, auxiliary=args.auxiliary, genotype=genotype,
+                stem_multiplier=3, drop_prob=args.drop_path_prob, args=args,
+                name='model')
             top1 = fluid.layers.accuracy(input=logits, label=label, k=1)
             top5 = fluid.layers.accuracy(input=logits, label=label, k=5)
             loss = fluid.layers.reduce_mean(
@@ -116,14 +117,15 @@ def build_program(main_prog, startup_prog, is_train, args):
                 step_per_epoch = int(CIFAR10_TRAIN / args.batch_size)
                 learning_rate = fluid.layers.cosine_decay(args.learning_rate, step_per_epoch, args.epochs)
                 fluid.clip.set_gradient_clip(clip=fluid.clip.GradientClipByGlobalNorm(clip_norm=5.0))
-                optimizer = fluid.optimizer.MomentumOptimizer(learning_rate, args.momentum, regularization=fluid.regularizer.L2DecayRegularizer(args.weight_decay))
+                optimizer = fluid.optimizer.MomentumOptimizer(learning_rate, args.momentum,
+                    regularization=fluid.regularizer.L2DecayRegularizer(args.weight_decay))
                 optimizer.minimize(loss)
                 outs = [loss, top1, top5, learning_rate]
             else:
                 outs = [loss, top1, top5]
     return outs
 
-def train(main_prog, exe,  epoch_id, train_batches, fetch_list):
+def train(main_prog, exe,  epoch_id, train_batches, fetch_list, args):
     step_per_epoch = int(CIFAR10_TRAIN / args.batch_size)
     loss = utility.AvgrageMeter()
     top1 = utility.AvgrageMeter()
@@ -140,10 +142,13 @@ def train(main_prog, exe,  epoch_id, train_batches, fetch_list):
         loss.update(loss_v, args.batch_size)
         top1.update(top1_v, args.batch_size)
         top5.update(top5_v, args.batch_size)
-        print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), "Train Epoch {}, Step {}, Lr {:.3f}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}".format(epoch_id, step_id, lr[0], loss.avg[0], top1.avg[0], top5.avg[0]))
+        if step_id % args.report_freq == 0:
+            print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),\
+                "Train Epoch {}, Step {}, Lr {:.3f}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}"\
+                .format(epoch_id, step_id, lr[0], loss.avg[0], top1.avg[0], top5.avg[0]))
     return top1.avg[0]
 
-def valid(main_prog, exe,  epoch_id, valid_batches, fetch_list):
+def valid(main_prog, exe,  epoch_id, valid_batches, fetch_list, args):
     step_per_epoch = int(CIFAR10_VALID / args.batch_size)
     loss = utility.AvgrageMeter()
     top1 = utility.AvgrageMeter()
@@ -155,7 +160,10 @@ def valid(main_prog, exe,  epoch_id, valid_batches, fetch_list):
         loss.update(loss_v, args.batch_size)
         top1.update(top1_v, args.batch_size)
         top5.update(top5_v, args.batch_size)
-        print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), "Train Epoch {}, Step {}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}".format(epoch_id, step_id, loss.avg[0], top1.avg[0], top5.avg[0]))
+        if step_id % args.report_freq == 0:
+            print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),\
+                "Valid Epoch {}, Step {}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}"\
+                .format(epoch_id, step_id, loss.avg[0], top1.avg[0], top5.avg[0]))
     return top1.avg[0]
 
 def main(args):
@@ -202,9 +210,9 @@ def main(args):
 
 
     for epoch_id in range(args.epochs):
-        train_top1 = train(train_prog, exe, epoch_id, train_batches, train_fetch_list)
+        train_top1 = train(train_prog, exe, epoch_id, train_batches, train_fetch_list, args)
         print("Epoch {}, train_acc {:.6f}".format(epoch_id, train_top1))
-        valid_top1 = valid(test_prog, exe,  epoch_id, valid_batches, valid_fetch_list)
+        valid_top1 = valid(test_prog, exe,  epoch_id, valid_batches, valid_fetch_list, args)
         print("Epoch {}, valid_acc {:.6f}".format(epoch_id, valid_top1))
         # (TODO)save model
 

@@ -32,7 +32,7 @@ def drop_path(x, drop_prob, args):
         keep_prob = 1 - drop_prob
         mask = fluid.layers.assign(
             np.random.binomial(
-                1, keep_prob, size=args.batch_size))
+                1, keep_prob, size=args.batch_size).astype(np.float32))
         x = fluid.layers.elementwise_mul(x / keep_prob, mask, axis=0)
     return x
 
