@@ -62,7 +62,7 @@ OPS = {
 }
 
 
-def bn_param_config(name=None, affine=False, op=None):
+def bn_param_config(name='', affine=False, op=None):
     gama_name = name + "/" + str(op) + "/gama"
     beta_name = name + "/" + str(op) + "/beta"
     if affine is True:
@@ -91,7 +91,7 @@ def identity(x):
     return x
 
 
-def factorized_reduce(x, c_out, affine=True, name=None):
+def factorized_reduce(x, c_out, affine=True, name=''):
     assert c_out % 2 == 0
     x = fluid.layers.relu(x)
     x_sliced = fluid.layers.slice(x, [2, 3], [1, 1], [INT_MAX, INT_MAX])
@@ -111,11 +111,16 @@ def factorized_reduce(x, c_out, affine=True, name=None):
         bias_attr=False)
     x = fluid.layers.concat(input=[conv1, conv2], axis=1)
     gama, beta = bn_param_config(name, affine, "fr_bn")
-    x = fluid.layers.batch_norm(x, param_attr=gama, bias_attr=beta)
+    x = fluid.layers.batch_norm(
+        x,
+        param_attr=gama,
+        bias_attr=beta,
+        moving_mean_name=name + '/mean',
+        moving_variance_name=name + '/variance')
     return x
 
 
-def sep_conv(x, c_out, kernel_size, stride, padding, affine=True, name=None):
+def sep_conv(x, c_out, kernel_size, stride, padding, affine=True, name=''):
     c_in = x.shape[1]
     x = fluid.layers.relu(x)
     x = fluid.layers.conv2d(
@@ -165,7 +170,7 @@ def dil_conv(x,
              padding,
              dilation,
              affine=True,
-             name=None):
+             name=''):
     c_in = x.shape[1]
     x = fluid.layers.relu(x)
     x = fluid.layers.conv2d(
@@ -190,7 +195,7 @@ def dil_conv(x,
     return x
 
 
-def conv_7x1_1x7(x, c_out, stride, affine=True, name=None):
+def conv_7x1_1x7(x, c_out, stride, affine=True, name=''):
     x = fluid.layers.relu(x)
     x = fluid.layers.conv2d(
         x,
@@ -209,8 +214,7 @@ def conv_7x1_1x7(x, c_out, stride, affine=True, name=None):
     return x
 
 
-def relu_conv_bn(x, c_out, kernel_size, stride, padding, affine=True,
-                 name=None):
+def relu_conv_bn(x, c_out, kernel_size, stride, padding, affine=True, name=''):
     x = fluid.layers.relu(x)
     x = fluid.layers.conv2d(
         x,
@@ -220,8 +224,11 @@ def relu_conv_bn(x, c_out, kernel_size, stride, padding, affine=True,
         padding=padding,
         param_attr=fluid.ParamAttr(name=name + "/" + "rcb_conv"),
         bias_attr=False)
-    begin = time.time()
     gama, beta = bn_param_config(name, affine, "rcb_bn")
-    x = fluid.layers.batch_norm(x, param_attr=gama, bias_attr=beta)
-    #print("bn takes:", time.time() - begin)
+    x = fluid.layers.batch_norm(
+        x,
+        param_attr=gama,
+        bias_attr=beta,
+        moving_mean_name=name + '/mean',
+        moving_variance_name=name + '/variance')
     return x

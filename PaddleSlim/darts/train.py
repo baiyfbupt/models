@@ -49,6 +49,7 @@ set_paddle_flags({
 import paddle.fluid as fluid
 import paddle.fluid.profiler as profiler
 from model import network_cifar as network
+import genotypes
 import reader
 import utility
 
@@ -58,8 +59,8 @@ add_arg = functools.partial(utility.add_arguments, argparser=parser)
 # yapf: disable
 add_arg('profile',           bool,  False,           "Enable profiler.")
 add_arg('parallel',          bool,  True,            "Whether use multi-GPU/threads.")
-add_arg('use_multiprocess',  bool,  True,      "Whether use multiprocess reader.")
-add_arg('num_workers',       int,   8,               "The multiprocess reader number.")
+add_arg('use_multiprocess',  bool,  True,            "Whether use multiprocess reader.")
+add_arg('num_workers',       int,   2,               "The multiprocess reader number.")
 add_arg('data',              str,   './data/cifar-10-batches-py', "The dir of dataset.")
 add_arg('batch_size',        int,   96,              "Minibatch size.")
 add_arg('learning_rate',     float, 0.025,           "The start learning rate.")
@@ -67,15 +68,15 @@ add_arg('learning_rate_min', float, 0.001,           "The min learning rate.")
 add_arg('momentum',          float, 0.9,             "Momentum.")
 add_arg('weight_decay',      float, 3e-4,            "Weight_decay.")
 add_arg('use_gpu',           bool,  True,            "Whether use GPU.")
-add_arg('epochs',            int,   600,              "Epoch number.")
+add_arg('epochs',            int,   600,             "Epoch number.")
 add_arg('init_channels',     int,   36,              "Init channel number.")
-add_arg('layers',            int,   20,               "Total number of layers.")
+add_arg('layers',            int,   20,              "Total number of layers.")
 add_arg('class_num',         int,   10,              "Class number of dataset.")
 add_arg('model_save_dir',    str,   'output',        "The path to save model.")
 add_arg('cutout',            bool,  True,            'Whether use cutout.')
 add_arg('cutout_length',     int,   16,              "Cutout length.")
 add_arg('auxiliary',         bool,  True,            'Use auxiliary tower.')
-add_arg('axuxiliary_weight', float, 0.4,             "Weight for auxiliary loss.")
+add_arg('auxiliary_weight',  float, 0.4,             "Weight for auxiliary loss.")
 add_arg('drop_path_prob',    float, 0.2,             "Drop path probability.")
 add_arg('save',              str,   'EXP',           "Experiment name.")
 add_arg('grad_clip',         float, 5,               "Gradient clipping.")
@@ -97,12 +98,12 @@ CIFAR10_VALID = 10000
 
 def build_program(main_prog, startup_prog, is_train, args):
     image_shape = [int(m) for m in args.image_shape.split(",")]
-    with fluid.program.guard(main_prog, startup_prog):
+    with fluid.program_guard(main_prog, startup_prog):
         with fluid.unique_name.guard():
             image = fluid.layers.data(name="image", shape=image_shape, dtype="float32")
             label = fluid.layers.data(name="label", shape=[1], dtype="int64")
             genotype = eval("genotypes.%s" % args.arch)
-            logits, logits_aux = network(x=image, is_train=is_train, c_in=args.init_channels, num_classes=args.class_num, layers=args.layers, auxiliary=args.auxiliary,genotype=genotype, stem_multiplier=3, drop_prob=args.drop_prob, args=args)
+            logits, logits_aux = network(x=image, is_train=is_train, c_in=args.init_channels, num_classes=args.class_num, layers=args.layers, auxiliary=args.auxiliary,genotype=genotype, stem_multiplier=3, drop_prob=0, args=args, name='model')
             top1 = fluid.layers.accuracy(input=logits, label=label, k=1)
             top5 = fluid.layers.accuracy(input=logits, label=label, k=5)
             loss = fluid.layers.reduce_mean(
@@ -111,16 +112,12 @@ def build_program(main_prog, startup_prog, is_train, args):
                 if args.auxiliary:
                     loss_aux = fluid.layers.reduce_mean(
                         fluid.layers.softmax_with_cross_entropy(logits_aux, label))
-                    loss += args.auxiliary_weight*loss_aux
+                    loss = loss + args.auxiliary_weight*loss_aux
                 step_per_epoch = int(CIFAR10_TRAIN / args.batch_size)
-                learning_rate = fluid.layers.cosine_decay(args.learning_rate, step_per_epoch,
-                                    args.epochs)
-                model_var = utility.get_parameters(main_prog.global_block().all_parameters(), 'model')[1]
-                fluid.clip.set_gradient_clip(
-                    clip=fluid.clip.GradientClipByGlobalNorm(clip_norm=5.0),
-                    param_list=[v.name for v in model_var])
+                learning_rate = fluid.layers.cosine_decay(args.learning_rate, step_per_epoch, args.epochs)
+                fluid.clip.set_gradient_clip(clip=fluid.clip.GradientClipByGlobalNorm(clip_norm=5.0))
                 optimizer = fluid.optimizer.MomentumOptimizer(learning_rate, args.momentum, regularization=fluid.regularizer.L2DecayRegularizer(args.weight_decay))
-                optimizer.minimize(loss, parameter_list=[v.name for v in model_var])
+                optimizer.minimize(loss)
                 outs = [loss, top1, top5, learning_rate]
             else:
                 outs = [loss, top1, top5]
@@ -133,12 +130,12 @@ def train(main_prog, exe,  epoch_id, train_batches, fetch_list):
     top5 = utility.AvgrageMeter()
     for step_id in range(step_per_epoch):
         if args.profile:
-            if epoch_id == 0 and step_id == 1:
+            if epoch_id == 0 and step_id == 5:
                 profiler.start_profiler("All")
-            elif epoch_id == 0 and step_id == 3:
+            elif epoch_id == 0 and step_id == 10:
                 profiler.stop_profiler("total", "/tmp/profile")
-        image_train, label_train = next(train_batches)
-        feed = {"image_train": image_train, "label_train": label_train}
+        image, label = next(train_batches)
+        feed = {"image": image, "label": label}
         loss_v, top1_v, top5_v, lr = exe.run(main_prog, feed=feed, fetch_list=[v.name for v in fetch_list])
         loss.update(loss_v, args.batch_size)
         top1.update(top1_v, args.batch_size)
@@ -152,8 +149,8 @@ def valid(main_prog, exe,  epoch_id, valid_batches, fetch_list):
     top1 = utility.AvgrageMeter()
     top5 = utility.AvgrageMeter()
     for step_id in range(step_per_epoch):
-        image_train, label_train = next(valid_batches)
-        feed = {"image_train": image_train, "label_train": label_train}
+        image, label = next(valid_batches)
+        feed = {"image": image, "label": label}
         loss_v, top1_v, top5_v = exe.run(main_prog, feed=feed, fetch_list=[v.name for v in fetch_list])
         loss.update(loss_v, args.batch_size)
         top1.update(top1_v, args.batch_size)
@@ -172,11 +169,11 @@ def main(args):
     test_prog = fluid.Program()
 
     train_fetch_list = build_program(main_prog=train_prog, startup_prog=startup_prog, is_train=True, args=args)
-    valid_fetch_list = build_program(main_prog=test_prog, startup_prog=startup_prog, is_train=True, args=args)
+    valid_fetch_list = build_program(main_prog=test_prog, startup_prog=startup_prog, is_train=False, args=args)
 
     test_prog = test_prog.clone(for_test=True)
     place = fluid.CUDAPlace(0) if args.use_gpu else fluid.CPUPlace()
-    exe = fluid.Execuator(place)
+    exe = fluid.Executor(place)
     exe.run(startup_prog)
     train_batches = reader.train_valid(batch_size_per_device, True, is_shuffle, args)()
     valid_batches = reader.train_valid(batch_size_per_device, False, False, args)()
