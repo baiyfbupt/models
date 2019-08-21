@@ -104,37 +104,28 @@ def auxiliary_cifar(x, num_classes, name):
                           num_classes,
                           param_attr=fluid.ParamAttr(
                               name=name + "/" + "fc_weights"),
-                          bias_attr=False)
+                          bias_attr=fluid.ParamAttr(name=name + "/fc_bias"))
     return out
 
 
 def network_cifar(x, is_train, c_in, num_classes, layers, auxiliary, genotype,
                   stem_multiplier, drop_prob, args, name):
     c_curr = stem_multiplier * c_in
-    s0 = fluid.layers.conv2d(
+    x = fluid.layers.conv2d(
         x,
         c_curr,
         3,
         padding=1,
         param_attr=fluid.ParamAttr(name=name + "/conv_0"),
         bias_attr=False)
-    s0 = fluid.layers.batch_norm(
-        s0,
+    x = fluid.layers.batch_norm(
+        x,
         param_attr=fluid.ParamAttr(name=name + "/bn0_scale"),
         bias_attr=fluid.ParamAttr(name=name + "/bn0_offset"))
-    s1 = fluid.layers.conv2d(
-        x,
-        c_curr,
-        3,
-        padding=1,
-        param_attr=fluid.ParamAttr(name=name + "/conv_1"),
-        bias_attr=False)
-    s1 = fluid.layers.batch_norm(
-        s1,
-        param_attr=fluid.ParamAttr(name=name + "/bn1_scale"),
-        bias_attr=fluid.ParamAttr(name=name + "/bn1_offset"))
+    s0 = s1 = x
     reduction_prev = False
     logits_aux = None
+    c_curr = c_in
     for i in range(layers):
         if i in [layers // 3, 2 * layers // 3]:
             c_curr *= 2
@@ -155,5 +146,5 @@ def network_cifar(x, is_train, c_in, num_classes, layers, auxiliary, genotype,
         out,
         num_classes,
         param_attr=fluid.ParamAttr(name=name + "/fc_weights"),
-        bias_attr=False)
+        bias_attr=fluid.ParamAttr(name=name + "/fc_bias"))
     return logits, logits_aux

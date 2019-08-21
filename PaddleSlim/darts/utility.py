@@ -18,6 +18,7 @@ from __future__ import print_function
 import distutils.util
 import six
 import sys
+import numpy as np
 import paddle.fluid as fluid
 
 
@@ -96,3 +97,12 @@ def get_parameters(all_params, prefix):
             parameters_name.append(param.name)
             parameters_val.append(param)
     return parameters_name, parameters_val
+
+
+def count_parameters_in_MB(all_params, prefix='model'):
+    parameters_number = 0
+    for param in all_params:
+        if param.name.startswith(
+                prefix) and param.trainable and 'aux' not in param.name:
+            parameters_number += np.prod(param.shape)
+    return parameters_number / 1e6

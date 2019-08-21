@@ -110,6 +110,7 @@ def build_program(main_prog, startup_prog, is_train, args):
             loss = fluid.layers.reduce_mean(
                 fluid.layers.softmax_with_cross_entropy(logits, label))
             if is_train:
+                print("param size = {:.6f}MB".format(utility.count_parameters_in_MB(main_prog.global_block().all_parameters(), 'model')))
                 if args.auxiliary:
                     loss_aux = fluid.layers.reduce_mean(
                         fluid.layers.softmax_with_cross_entropy(logits_aux, label))
