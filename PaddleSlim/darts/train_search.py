@@ -87,7 +87,7 @@ add_arg('with_mem_opt',      bool,  False,            "Whether to use memory opt
 #parser.add_argument('--unrolled', action='store_true', help='If set, use one-step unrolled validation loss.')
 #yapf: enable
 
-output_dir = './outputs/train_model/'
+output_dir = './output/train_model/'
 if not os.path.isdir(output_dir):
     print("Path {} does not exist. Creating.".format(output_dir))
     os.makedirs(output_dir)
