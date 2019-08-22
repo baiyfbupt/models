@@ -142,6 +142,7 @@ def sep_conv(x, c_out, kernel_size, stride, padding, affine=True, name=''):
         stride=stride,
         padding=padding,
         groups=c_in,
+        use_cudnn=False,
         param_attr=fluid.ParamAttr(
             name=name + "/sep_conv_1_1",
             initializer=UniformInitializer(
@@ -175,6 +176,7 @@ def sep_conv(x, c_out, kernel_size, stride, padding, affine=True, name=''):
         stride=1,
         padding=padding,
         groups=c_in,
+        use_cudnn=False,
         param_attr=fluid.ParamAttr(
             name=name + "/sep_conv2_1",
             initializer=UniformInitializer(
@@ -220,6 +222,7 @@ def dil_conv(x,
         padding=padding,
         dilation=dilation,
         groups=c_in,
+        use_cudnn=False,
         param_attr=fluid.ParamAttr(
             name=name + "/dil_conv1",
             initializer=UniformInitializer(
