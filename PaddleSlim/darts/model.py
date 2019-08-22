@@ -21,7 +21,7 @@ import sys
 import time
 import paddle.fluid as fluid
 from paddle.fluid.param_attr import ParamAttr
-from paddle.fluid.initializer import Normal
+from paddle.fluid.initializer import UniformInitializer, ConstantInitializer
 from genotypes import PRIMITIVES
 from genotypes import Genotype
 from operations import *
@@ -76,52 +76,85 @@ def auxiliary_cifar(x, num_classes, name):
     x = fluid.layers.relu(x)
     pooled = fluid.layers.pool2d(
         x, pool_size=5, pool_stride=3, pool_padding=0, pool_type='avg')
+    k = (1. / pooled.shape[1] / 1 / 1)**0.5
     conv1 = fluid.layers.conv2d(
         pooled,
         128,
         1,
-        param_attr=fluid.ParamAttr(name=name + "/conv_1"),
+        param_attr=fluid.ParamAttr(
+            name=name + "/conv_1",
+            initializer=UniformInitializer(
+                low=-k, high=k)),
         bias_attr=False)
     conv1 = fluid.layers.batch_norm(
         conv1,
-        param_attr=fluid.ParamAttr(name=name + "/bn1_scale"),
-        bias_attr=fluid.ParamAttr(name=name + "/bn1_offset"))
+        param_attr=fluid.ParamAttr(
+            name=name + "/bn1_scale", initializer=ConstantInitializer(value=1)),
+        bias_attr=fluid.ParamAttr(
+            name=name + "/bn1_offset",
+            initializer=ConstantInitializer(value=0)),
+        moving_mean_name=name + "/bn1_mean",
+        moving_variance_name=name + "/bn1_variance")
     conv1 = fluid.layers.relu(conv1)
+    k = (1. / conv1.shape[1] / 2 / 2)**0.5
     conv2 = fluid.layers.conv2d(
         conv1,
         768,
         2,
-        param_attr=fluid.ParamAttr(name=name + "/conv_2"),
+        param_attr=fluid.ParamAttr(
+            name=name + "/conv_2",
+            initializer=UniformInitializer(
+                low=-k, high=k)),
         bias_attr=False)
     conv2 = fluid.layers.batch_norm(
         conv2,
-        param_attr=fluid.ParamAttr(name=name + "/bn2_scale"),
-        bias_attr=fluid.ParamAttr(name=name + "/bn2_offset"))
+        param_attr=fluid.ParamAttr(
+            name=name + "/bn2_scale", initializer=ConstantInitializer(value=1)),
+        bias_attr=fluid.ParamAttr(
+            name=name + "/bn2_offset",
+            initializer=ConstantInitializer(value=0)),
+        moving_mean_name=name + "/bn2_mean",
+        moving_variance_name=name + "/bn2_variance")
     conv2 = fluid.layers.relu(conv2)
     out = fluid.layers.pool2d(conv2, pool_type='avg', global_pooling=True)
     out = fluid.layers.squeeze(out, axes=[2, 3])
+    k = (1. / out.shape[1])**0.5
     out = fluid.layers.fc(out,
                           num_classes,
                           param_attr=fluid.ParamAttr(
-                              name=name + "/" + "fc_weights"),
-                          bias_attr=fluid.ParamAttr(name=name + "/fc_bias"))
+                              name=name + "/fc_weights",
+                              initializer=UniformInitializer(
+                                  low=-k, high=k)),
+                          bias_attr=fluid.ParamAttr(
+                              name=name + "/fc_bias",
+                              initializer=UniformInitializer(
+                                  low=-k, high=k)))
     return out
 
 
 def network_cifar(x, is_train, c_in, num_classes, layers, auxiliary, genotype,
                   stem_multiplier, drop_prob, args, name):
     c_curr = stem_multiplier * c_in
+    k = (1. / x.shape[1] / 3 / 3)**0.5
     x = fluid.layers.conv2d(
         x,
         c_curr,
         3,
         padding=1,
-        param_attr=fluid.ParamAttr(name=name + "/conv_0"),
+        param_attr=fluid.ParamAttr(
+            name=name + "/conv_0",
+            initializer=UniformInitializer(
+                low=-k, high=k)),
         bias_attr=False)
     x = fluid.layers.batch_norm(
         x,
-        param_attr=fluid.ParamAttr(name=name + "/bn0_scale"),
-        bias_attr=fluid.ParamAttr(name=name + "/bn0_offset"))
+        param_attr=fluid.ParamAttr(
+            name=name + "/bn0_scale", initializer=ConstantInitializer(value=1)),
+        bias_attr=fluid.ParamAttr(
+            name=name + "/bn0_offset",
+            initializer=ConstantInitializer(value=0)),
+        moving_mean_name=name + "/bn0_mean",
+        moving_variance_name=name + "/bn0_variance")
     s0 = s1 = x
     reduction_prev = False
     logits_aux = None
@@ -142,9 +175,15 @@ def network_cifar(x, is_train, c_in, num_classes, layers, auxiliary, genotype,
 
     out = fluid.layers.pool2d(s1, pool_type='avg', global_pooling=True)
     out = fluid.layers.squeeze(out, axes=[2, 3])
-    logits = fluid.layers.fc(
-        out,
-        num_classes,
-        param_attr=fluid.ParamAttr(name=name + "/fc_weights"),
-        bias_attr=fluid.ParamAttr(name=name + "/fc_bias"))
+    k = (1. / out.shape[1])**0.5
+    logits = fluid.layers.fc(out,
+                             num_classes,
+                             param_attr=fluid.ParamAttr(
+                                 name=name + "/fc_weights",
+                                 initializer=UniformInitializer(
+                                     low=-k, high=k)),
+                             bias_attr=fluid.ParamAttr(
+                                 name=name + "/fc_bias",
+                                 initializer=UniformInitializer(
+                                     low=-k, high=k)))
     return logits, logits_aux

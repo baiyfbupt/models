@@ -147,14 +147,14 @@ def train_search(batch_size, train_portion, is_shuffle, args):
 def train_valid(batch_size, is_train, is_shuffle, args):
     name = 'data_batch' if is_train else 'test_batch'
     datasets = cifar10_reader(name, is_shuffle, args)
-    n = int(math.ceil(len(datasets) // args.
-                      num_workers)) if args.use_multiprocess else len(datasets)
+    n = int(math.ceil(len(datasets) // args.num_workers)
+            ) if args.use_multiprocess and is_train else len(datasets)
     datasets_lists = [datasets[i:i + n] for i in range(0, len(datasets), n)]
     multi_readers = []
     for pid in range(len(datasets_lists)):
         multi_readers.append(
             reader_generator(datasets_lists[pid], batch_size, is_train, args))
-    if args.use_multiprocess:
+    if args.use_multiprocess and is_train:
         reader = paddle.reader.multiprocess_reader(multi_readers, False)
     else:
         reader = multi_readers[0]

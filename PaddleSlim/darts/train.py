@@ -58,7 +58,6 @@ add_arg = functools.partial(utility.add_arguments, argparser=parser)
 
 # yapf: disable
 add_arg('profile',           bool,  False,           "Enable profiler.")
-add_arg('parallel',          bool,  True,            "Whether use multi-GPU/threads.")
 add_arg('use_multiprocess',  bool,  True,            "Whether use multiprocess reader.")
 add_arg('num_workers',       int,   4,               "The multiprocess reader number.")
 add_arg('data',              str,   './data/cifar-10-batches-py', "The dir of dataset.")
@@ -184,11 +183,11 @@ def main(args):
     place = fluid.CUDAPlace(0) if args.use_gpu else fluid.CPUPlace()
     exe = fluid.Executor(place)
     exe.run(startup_prog)
-    train_batches = reader.train_valid(batch_size_per_device, True, is_shuffle, args)()
-    valid_batches = reader.train_valid(batch_size_per_device, False, False, args)()
+    train_batches = reader.train_valid(batch_size=batch_size_per_device, is_train=True, is_shuffle=is_shuffle, args=args)()
+    valid_batches = reader.train_valid(batch_size=batch_size_per_device, is_train=False, is_shuffle=False, args=args)()
 
     exec_strategy = fluid.ExecutionStrategy()
-    exec_strategy.num_threads = 4
+    exec_strategy.num_threads = 4 * devices_num
     build_strategy = fluid.BuildStrategy()
     if args.with_mem_opt:
         train_fetch_list[0].persistable = True
