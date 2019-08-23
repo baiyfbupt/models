@@ -93,7 +93,7 @@ def get_parameters(all_params, prefix):
     parameters_name = []
     parameters_val = []
     for param in all_params:
-        if param.name.startswith(prefix):
+        if param.name.startswith(prefix) and param.trainable:
             parameters_name.append(param.name)
             parameters_val.append(param)
     return parameters_name, parameters_val

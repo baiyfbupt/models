@@ -21,10 +21,14 @@ from PIL import ImageOps
 import os
 import math
 import random
-import _pickle as cPickle
 import numpy as np
 from PIL import Image
 import paddle
+# for python2/python3 compatiablity
+try:
+    import cPickle
+except:
+    import _pickle as cPickle
 
 IMAGE_SIZE = 32
 IMAGE_DEPTH = 3
@@ -99,8 +103,13 @@ def cifar10_reader(data_name, is_shuffle, args):
     datasets = []
     for name in names:
         print("Reading file " + name)
-        batch = cPickle.load(
-            open(os.path.join(args.data, name), 'rb'), encoding='iso-8859-1')
+        # for python2/python3 compatiablity
+        try:
+            batch = cPickle.load(open(os.path.join(args.data, name), 'rb'))
+        except:
+            batch = cPickle.load(
+                open(os.path.join(args.data, name), 'rb'),
+                encoding='iso-8859-1')
         data = batch['data']
         labels = batch.get('labels', batch.get('fine_labels', None))
         assert labels is not None
@@ -147,14 +156,14 @@ def train_search(batch_size, train_portion, is_shuffle, args):
 def train_valid(batch_size, is_train, is_shuffle, args):
     name = 'data_batch' if is_train else 'test_batch'
     datasets = cifar10_reader(name, is_shuffle, args)
-    n = int(math.ceil(len(datasets) // args.num_workers)
-            ) if args.use_multiprocess and is_train else len(datasets)
+    n = int(math.ceil(len(datasets) // args.
+                      num_workers)) if args.use_multiprocess else len(datasets)
     datasets_lists = [datasets[i:i + n] for i in range(0, len(datasets), n)]
     multi_readers = []
     for pid in range(len(datasets_lists)):
         multi_readers.append(
             reader_generator(datasets_lists[pid], batch_size, is_train, args))
-    if args.use_multiprocess and is_train:
+    if args.use_multiprocess:
         reader = paddle.reader.multiprocess_reader(multi_readers, False)
     else:
         reader = multi_readers[0]
