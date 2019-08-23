@@ -22,7 +22,7 @@ import time
 import numpy as np
 import paddle.fluid as fluid
 from paddle.fluid.param_attr import ParamAttr
-from paddle.fluid.initializer import Normal
+from paddle.fluid.initializer import NormalInitializer, UniformInitializer, ConstantInitializer
 from genotypes import PRIMITIVES
 from genotypes import Genotype
 from operations import *
@@ -35,7 +35,7 @@ def mixed_op(x, c_out, stride, index, reduction, name):
         shape=[len(PRIMITIVES)],
         dtype="float32",
         attr=param_attr,
-        default_initializer=Normal(
+        default_initializer=NormalInitializer(
             loc=0.0, scale=1e-3))
     weight = fluid.layers.softmax(weight)
     ops = []
@@ -89,17 +89,25 @@ def model(x,
           stem_multiplier=3,
           name="model"):
     c_curr = stem_multiplier * c_in
+    k = (1. / x.shape[1] / 3 / 3)**0.5
     x = fluid.layers.conv2d(
         x,
         c_curr,
         3,
         padding=1,
-        param_attr=fluid.ParamAttr(name=name + "/" + "conv_0"),
+        param_attr=fluid.ParamAttr(
+            name=name + "/" + "conv_0",
+            initializer=UniformInitializer(
+                low=-k, high=k)),
         bias_attr=False)
     x = fluid.layers.batch_norm(
         x,
-        param_attr=fluid.ParamAttr(name=name + "/" + "bn0_scale"),
-        bias_attr=fluid.ParamAttr(name=name + "/" + "bn0_offset"))
+        param_attr=fluid.ParamAttr(
+            name=name + "/" + "bn0_scale",
+            initializer=ConstantInitializer(value=1)),
+        bias_attr=fluid.ParamAttr(
+            name=name + "/" + "bn0_offset",
+            initializer=ConstantInitializer(value=0)))
     s0 = s1 = x
     reduction_prev = False
     c_curr = c_in
@@ -114,11 +122,17 @@ def model(x,
         reduction_prev = reduction
     out = fluid.layers.pool2d(s1, pool_type='avg', global_pooling=True)
     out = fluid.layers.squeeze(out, axes=[2, 3])
-    logits = fluid.layers.fc(
-        out,
-        num_classes,
-        param_attr=fluid.ParamAttr(name=name + "/" + "fc_weights"),
-        bias_attr=fluid.ParamAttr(name=name + "/" + "fc_bias"))
+    k = (1. / out.shape[1])**0.5
+    logits = fluid.layers.fc(out,
+                             num_classes,
+                             param_attr=fluid.ParamAttr(
+                                 name=name + "/" + "fc_weights",
+                                 initializer=UniformInitializer(
+                                     low=-k, high=k)),
+                             bias_attr=fluid.ParamAttr(
+                                 name=name + "/" + "fc_bias",
+                                 initializer=UniformInitializer(
+                                     low=-k, high=k)))
     train_loss = fluid.layers.reduce_mean(
         fluid.layers.softmax_with_cross_entropy(logits, y))
     return logits, train_loss

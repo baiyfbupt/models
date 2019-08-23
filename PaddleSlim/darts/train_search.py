@@ -59,10 +59,10 @@ add_arg = functools.partial(utility.add_arguments, argparser=parser)
 
 # yapf: disable
 add_arg('profile',           bool,  False,           "Enable profiler.")
-add_arg('parallel',          bool,  True,            "Whether use multi-GPU/threads.")
-add_arg('use_multiprocess',  bool,  True,      "Whether use multiprocess reader.")
+add_arg('report_freq',       int,   10,              "Report frequency.")
+add_arg('use_multiprocess',  bool,  True,            "Whether use multiprocess reader.")
 add_arg('num_workers',       int,   8,               "The multiprocess reader number.")
-add_arg('data',              str,   './data/cifar-10-batches-py', "The dir of dataset.")
+add_arg('data',              str,   'cifar-10',      "The dir of dataset.")
 add_arg('batch_size',        int,   16,              "Minibatch size.")
 add_arg('learning_rate',     float, 0.025,           "The start learning rate.")
 add_arg('learning_rate_min', float, 0.001,           "The min learning rate.")
@@ -82,8 +82,8 @@ add_arg('grad_clip',         float, 5,               "Gradient clipping.")
 add_arg('train_portion',     float, 0.5,             "Portion of training data.")
 add_arg('arch_learning_rate',float, 3e-4,            "Learning rate for arch encoding.")
 add_arg('arch_weight_decay', float, 1e-3,            "Weight decay for arch encoding.")
-add_arg('image_shape',       str,   "3,32,32",     "input image size")
-add_arg('with_mem_opt',      bool,  False,            "Whether to use memory optimization or not.")
+add_arg('image_shape',       str,   "3,32,32",       "input image size")
+add_arg('with_mem_opt',      bool,  False,           "Whether to use memory optimization or not.")
 #parser.add_argument('--unrolled', action='store_true', help='If set, use one-step unrolled validation loss.')
 #yapf: enable
 
@@ -141,7 +141,7 @@ def main(args):
     place = fluid.CUDAPlace(0) if args.use_gpu else fluid.CPUPlace()
     exe = fluid.Executor(place)
     exe.run(startup_prog)
-    train_reader, valid_reader = reader.train_search(batch_size_per_device, args.train_portion, is_shuffle, args)
+    train_reader, valid_reader = reader.train_search(batch_size=batch_size_per_device, train_portion=args.train_portion, is_shuffle=is_shuffle, args=args)
     train_batches = train_reader()
     valid_batches = valid_reader()
 
@@ -149,6 +149,7 @@ def main(args):
     exec_strategy.num_threads = 4
     build_strategy = fluid.BuildStrategy()
     if args.with_mem_opt:
+        learning_rate.persistable = True
         loss.persistable = True
         top1.persistable = True
         top5.persistable = True
@@ -162,32 +163,26 @@ def main(args):
                  loss_name=fetch[1].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
-    #share_vars_from=unrolled_optim_prog)
     pos_grad_prog = fluid.CompiledProgram(pos_grad_prog).with_data_parallel(
                  loss_name=fetch[2].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
-    #share_vars_from=model_plus_prog)
     model_minus_prog = fluid.CompiledProgram(model_minus_prog).with_data_parallel(
                  loss_name=fetch[3].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
-    #share_vars_from=model_plus_prog)
     neg_grad_prog = fluid.CompiledProgram(neg_grad_prog).with_data_parallel(
                  loss_name=fetch[4].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
-    #share_vars_from=model_minus_prog)
     arch_optim_prog = fluid.CompiledProgram(arch_optim_prog).with_data_parallel(
                  loss_name=fetch[5].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
-    #share_vars_from=model_minus_prog)
     train_prog = fluid.CompiledProgram(train_prog).with_data_parallel(
                  loss_name=loss.name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
-    #             share_vars_from=arch_optim_prog)
     print(time.asctime( time.localtime(time.time())), "compile graph done")
 
     def save_model(postfix, program):
@@ -206,8 +201,10 @@ def main(args):
         arch_values = [np.exp(arch_v) / np.sum(np.exp(arch_v)) for arch_v in arch_values]
         alpha_normal = [i for i in zip(arch_names, arch_values) if 'weight1' in i[0]]
         alpha_reduce = [i for i in zip(arch_names, arch_values) if 'weight2' in i[0]]
-        print([pair[1] for pair in sorted(alpha_normal, key=lambda i:int(i[0].split('_')[1]))])
-        print([pair[1] for pair in sorted(alpha_reduce, key=lambda i:int(i[0].split('_')[1]))])
+        print('normal:')
+        print(np.array([pair[1] for pair in sorted(alpha_normal, key=lambda i:int(i[0].split('_')[1]))]))
+        print('reduce:')
+        print(np.array([pair[1] for pair in sorted(alpha_reduce, key=lambda i:int(i[0].split('_')[1]))]))
         genotype = get_genotype(arch_names, arch_values)
         print("genotype={}".format(genotype))
 
@@ -224,7 +221,10 @@ def main(args):
             loss.update(loss_v, args.batch_size)
             top1.update(top1_v, args.batch_size)
             top5.update(top5_v, args.batch_size)
-            print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), "Valid Epoch {}, Step {}, loss {:.3f}, acc_1 {:.6f}, acc_5 {:.6f}".format(epoch_id, step_id, loss.avg[0], top1.avg[0], top5.avg[0]))
+            if step_id % args.report_freq == 0:
+                print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), \
+                    "Valid Epoch {}, Step {}, loss {:.3f}, acc_1 {:.6f}, acc_5 {:.6f}"\
+                    .format(epoch_id, step_id, loss.avg[0], top1.avg[0], top5.avg[0]))
         return top1.avg[0]
 
     def train(epoch_id, train_batches, valid_batches, fetch_list):
@@ -250,7 +250,10 @@ def main(args):
             loss.update(loss_v, args.batch_size)
             top1.update(top1_v, args.batch_size)
             top5.update(top5_v, args.batch_size)
-            print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), "Train Epoch {}, Step {}, Lr {:.8f}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}".format(epoch_id, step_id, lr[0], loss.avg[0], top1.avg[0], top5.avg[0]))
+            if step_id % args.report_freq == 0:
+                print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), \
+                    "Train Epoch {}, Step {}, Lr {:.8f}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}"\
+                    .format(epoch_id, step_id, lr[0], loss.avg[0], top1.avg[0], top5.avg[0]))
         return top1.avg[0]
 
 

@@ -21,6 +21,7 @@ from PIL import ImageOps
 import os
 import math
 import random
+import tarfile
 import numpy as np
 from PIL import Image
 import paddle
@@ -34,6 +35,12 @@ IMAGE_SIZE = 32
 IMAGE_DEPTH = 3
 CIFAR_MEAN = [0.49139968, 0.48215827, 0.44653124]
 CIFAR_STD = [0.24703233, 0.24348505, 0.26158768]
+
+URL_PREFIX = 'https://www.cs.toronto.edu/~kriz/'
+CIFAR10_URL = URL_PREFIX + 'cifar-10-python.tar.gz'
+CIFAR10_MD5 = 'c58f30108f718f92721af3b95e74349a'
+
+paddle.dataset.common.DATA_HOME = "dataset/"
 
 
 def preprocess(sample, is_training, args):
@@ -96,33 +103,33 @@ def reader_generator(datasets, batch_size, is_training, args):
     return reader
 
 
-def cifar10_reader(data_name, is_shuffle, args):
-    files = os.listdir(args.data)
-    names = [each_item for each_item in files if data_name in each_item]
-    names.sort()
-    datasets = []
-    for name in names:
-        print("Reading file " + name)
-        # for python2/python3 compatiablity
-        try:
-            batch = cPickle.load(open(os.path.join(args.data, name), 'rb'))
-        except:
-            batch = cPickle.load(
-                open(os.path.join(args.data, name), 'rb'),
-                encoding='iso-8859-1')
-        data = batch['data']
-        labels = batch.get('labels', batch.get('fine_labels', None))
-        assert labels is not None
-        dataset = zip(data, labels)
-        datasets.extend(dataset)
-    if is_shuffle:
-        random.shuffle(datasets)
+def cifar10_reader(file_name, data_name, is_shuffle, args):
+    with tarfile.open(file_name, mode='r') as f:
+        names = [
+            each_item.name for each_item in f if data_name in each_item.name
+        ]
+        names.sort()
+        datasets = []
+        for name in names:
+            print("Reading file " + name)
+            try:
+                batch = cPickle.load(f.extractfile(name), encoding='iso-8859-1')
+            except:
+                batch = cPickle.load(f.extractfile(name))
+            data = batch['data']
+            labels = batch.get('labels', batch.get('fine_labels', None))
+            assert labels is not None
+            dataset = zip(data, labels)
+            datasets.extend(dataset)
+        if is_shuffle:
+            random.shuffle(datasets)
     return datasets
 
 
 def train_search(batch_size, train_portion, is_shuffle, args):
-
-    datasets = cifar10_reader('data_batch', is_shuffle, args)
+    datasets = cifar10_reader(
+        paddle.dataset.common.download(CIFAR10_URL, 'cifar', CIFAR10_MD5),
+        'data_batch', is_shuffle, args)
     split_point = int(np.floor(train_portion * len(datasets)))
     train_datasets = datasets[:split_point]
     val_datasets = datasets[split_point:]
@@ -155,7 +162,9 @@ def train_search(batch_size, train_portion, is_shuffle, args):
 
 def train_valid(batch_size, is_train, is_shuffle, args):
     name = 'data_batch' if is_train else 'test_batch'
-    datasets = cifar10_reader(name, is_shuffle, args)
+    datasets = cifar10_reader(
+        paddle.dataset.common.download(CIFAR10_URL, 'cifar', CIFAR10_MD5), name,
+        is_shuffle, args)
     n = int(math.ceil(len(datasets) // args.
                       num_workers)) if args.use_multiprocess else len(datasets)
     datasets_lists = [datasets[i:i + n] for i in range(0, len(datasets), n)]

@@ -60,7 +60,7 @@ add_arg = functools.partial(utility.add_arguments, argparser=parser)
 add_arg('profile',           bool,  False,           "Enable profiler.")
 add_arg('use_multiprocess',  bool,  True,            "Whether use multiprocess reader.")
 add_arg('num_workers',       int,   4,               "The multiprocess reader number.")
-add_arg('data',              str,   './data/cifar-10-batches-py', "The dir of dataset.")
+add_arg('data',              str,   'cifar-10',      "The dir of dataset.")
 add_arg('batch_size',        int,   96,              "Minibatch size.")
 add_arg('learning_rate',     float, 0.025,           "The start learning rate.")
 add_arg('momentum',          float, 0.9,             "Momentum.")
@@ -80,9 +80,9 @@ add_arg('save',              str,   'EXP',           "Experiment name.")
 add_arg('grad_clip',         float, 5,               "Gradient clipping.")
 add_arg('image_shape',       str,   "3,32,32",       "Input image size")
 add_arg('arch',              str,   'DARTS',         "Which architecture to use")
-add_arg('report_freq',       float, 50,              'Report frequency')
+add_arg('report_freq',       int,   10,              'Report frequency')
 add_arg('with_mem_opt',      bool,  False,           "Whether to use memory optimization or not.")
-#yapf: enable
+# yapf: enable
 
 output_dir = './output/train_model/'
 if not os.path.isdir(output_dir):
@@ -96,36 +96,53 @@ def build_program(main_prog, startup_prog, is_train, args):
     image_shape = [int(m) for m in args.image_shape.split(",")]
     with fluid.program_guard(main_prog, startup_prog):
         with fluid.unique_name.guard():
-            image = fluid.layers.data(name="image", shape=image_shape, dtype="float32")
+            image = fluid.layers.data(
+                name="image", shape=image_shape, dtype="float32")
             label = fluid.layers.data(name="label", shape=[1], dtype="int64")
             genotype = eval("genotypes.%s" % args.arch)
-            logits, logits_aux = network(x=image, is_train=is_train,
-                c_in=args.init_channels, num_classes=args.class_num,
-                layers=args.layers, auxiliary=args.auxiliary, genotype=genotype,
-                stem_multiplier=3, drop_prob=args.drop_path_prob, args=args,
+            logits, logits_aux = network(
+                x=image,
+                is_train=is_train,
+                c_in=args.init_channels,
+                num_classes=args.class_num,
+                layers=args.layers,
+                auxiliary=args.auxiliary,
+                genotype=genotype,
+                stem_multiplier=3,
+                drop_prob=args.drop_path_prob,
+                args=args,
                 name='model')
             top1 = fluid.layers.accuracy(input=logits, label=label, k=1)
             top5 = fluid.layers.accuracy(input=logits, label=label, k=5)
             loss = fluid.layers.reduce_mean(
                 fluid.layers.softmax_with_cross_entropy(logits, label))
             if is_train:
-                print("param size = {:.6f}MB".format(utility.count_parameters_in_MB(main_prog.global_block().all_parameters(), 'model')))
+                print("param size = {:.6f}MB".format(
+                    utility.count_parameters_in_MB(main_prog.global_block()
+                                                   .all_parameters(), 'model')))
                 if args.auxiliary:
                     loss_aux = fluid.layers.reduce_mean(
-                        fluid.layers.softmax_with_cross_entropy(logits_aux, label))
-                    loss = loss + args.auxiliary_weight*loss_aux
+                        fluid.layers.softmax_with_cross_entropy(logits_aux,
+                                                                label))
+                    loss = loss + args.auxiliary_weight * loss_aux
                 step_per_epoch = int(CIFAR10_TRAIN / args.batch_size)
-                learning_rate = fluid.layers.cosine_decay(args.learning_rate, step_per_epoch, args.epochs)
-                fluid.clip.set_gradient_clip(clip=fluid.clip.GradientClipByGlobalNorm(clip_norm=5.0))
-                optimizer = fluid.optimizer.MomentumOptimizer(learning_rate, args.momentum,
-                    regularization=fluid.regularizer.L2DecayRegularizer(args.weight_decay))
+                learning_rate = fluid.layers.cosine_decay(
+                    args.learning_rate, step_per_epoch, args.epochs)
+                fluid.clip.set_gradient_clip(
+                    clip=fluid.clip.GradientClipByGlobalNorm(clip_norm=5.0))
+                optimizer = fluid.optimizer.MomentumOptimizer(
+                    learning_rate,
+                    args.momentum,
+                    regularization=fluid.regularizer.L2DecayRegularizer(
+                        args.weight_decay))
                 optimizer.minimize(loss)
                 outs = [loss, top1, top5, learning_rate]
             else:
                 outs = [loss, top1, top5]
     return outs
 
-def train(main_prog, exe,  epoch_id, train_batches, fetch_list, args):
+
+def train(main_prog, exe, epoch_id, train_batches, fetch_list, args):
     step_per_epoch = int(CIFAR10_TRAIN / args.batch_size)
     loss = utility.AvgrageMeter()
     top1 = utility.AvgrageMeter()
@@ -138,7 +155,8 @@ def train(main_prog, exe,  epoch_id, train_batches, fetch_list, args):
                 profiler.stop_profiler("total", "/tmp/profile")
         image, label = next(train_batches)
         feed = {"image": image, "label": label}
-        loss_v, top1_v, top5_v, lr = exe.run(main_prog, feed=feed, fetch_list=[v.name for v in fetch_list])
+        loss_v, top1_v, top5_v, lr = exe.run(
+            main_prog, feed=feed, fetch_list=[v.name for v in fetch_list])
         loss.update(loss_v, args.batch_size)
         top1.update(top1_v, args.batch_size)
         top5.update(top5_v, args.batch_size)
@@ -148,7 +166,8 @@ def train(main_prog, exe,  epoch_id, train_batches, fetch_list, args):
                 .format(epoch_id, step_id, lr[0], loss.avg[0], top1.avg[0], top5.avg[0]))
     return top1.avg[0]
 
-def valid(main_prog, exe,  epoch_id, valid_batches, fetch_list, args):
+
+def valid(main_prog, exe, epoch_id, valid_batches, fetch_list, args):
     step_per_epoch = int(CIFAR10_VALID / args.batch_size)
     loss = utility.AvgrageMeter()
     top1 = utility.AvgrageMeter()
@@ -156,7 +175,8 @@ def valid(main_prog, exe,  epoch_id, valid_batches, fetch_list, args):
     for step_id in range(step_per_epoch):
         image, label = next(valid_batches)
         feed = {"image": image, "label": label}
-        loss_v, top1_v, top5_v = exe.run(main_prog, feed=feed, fetch_list=[v.name for v in fetch_list])
+        loss_v, top1_v, top5_v = exe.run(
+            main_prog, feed=feed, fetch_list=[v.name for v in fetch_list])
         loss.update(loss_v, args.batch_size)
         top1.update(top1_v, args.batch_size)
         top5.update(top5_v, args.batch_size)
@@ -165,6 +185,7 @@ def valid(main_prog, exe,  epoch_id, valid_batches, fetch_list, args):
                 "Valid Epoch {}, Step {}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}"\
                 .format(epoch_id, step_id, loss.avg[0], top1.avg[0], top5.avg[0]))
     return top1.avg[0]
+
 
 def main(args):
     devices = os.getenv("CUDA_VISIBLE_DEVICES") or ""
@@ -176,15 +197,31 @@ def main(args):
     train_prog = fluid.Program()
     test_prog = fluid.Program()
 
-    train_fetch_list = build_program(main_prog=train_prog, startup_prog=startup_prog, is_train=True, args=args)
-    valid_fetch_list = build_program(main_prog=test_prog, startup_prog=startup_prog, is_train=False, args=args)
+    train_fetch_list = build_program(
+        main_prog=train_prog,
+        startup_prog=startup_prog,
+        is_train=True,
+        args=args)
+    valid_fetch_list = build_program(
+        main_prog=test_prog,
+        startup_prog=startup_prog,
+        is_train=False,
+        args=args)
 
     test_prog = test_prog.clone(for_test=True)
     place = fluid.CUDAPlace(0) if args.use_gpu else fluid.CPUPlace()
     exe = fluid.Executor(place)
     exe.run(startup_prog)
-    train_batches = reader.train_valid(batch_size=batch_size_per_device, is_train=True, is_shuffle=is_shuffle, args=args)()
-    valid_batches = reader.train_valid(batch_size=batch_size_per_device, is_train=False, is_shuffle=False, args=args)()
+    train_batches = reader.train_valid(
+        batch_size=batch_size_per_device,
+        is_train=True,
+        is_shuffle=is_shuffle,
+        args=args)()
+    valid_batches = reader.train_valid(
+        batch_size=batch_size_per_device,
+        is_train=False,
+        is_shuffle=False,
+        args=args)()
 
     exec_strategy = fluid.ExecutionStrategy()
     exec_strategy.num_threads = 4 * devices_num
@@ -197,9 +234,9 @@ def main(args):
         build_strategy.memory_optimize = True
 
     train_prog = fluid.CompiledProgram(train_prog).with_data_parallel(
-                 loss_name=train_fetch_list[0].name,
-                 build_strategy=build_strategy,
-                 exec_strategy=exec_strategy)
+        loss_name=train_fetch_list[0].name,
+        build_strategy=build_strategy,
+        exec_strategy=exec_strategy)
 
     def save_model(postfix, program):
         model_path = os.path.join(args.model_save_dir, postfix)
@@ -208,11 +245,12 @@ def main(args):
         print('save models to %s' % (model_path))
         fluid.io.save_persistables(exe, model_path, main_program=program)
 
-
     for epoch_id in range(args.epochs):
-        train_top1 = train(train_prog, exe, epoch_id, train_batches, train_fetch_list, args)
+        train_top1 = train(train_prog, exe, epoch_id, train_batches,
+                           train_fetch_list, args)
         print("Epoch {}, train_acc {:.6f}".format(epoch_id, train_top1))
-        valid_top1 = valid(test_prog, exe,  epoch_id, valid_batches, valid_fetch_list, args)
+        valid_top1 = valid(test_prog, exe, epoch_id, valid_batches,
+                           valid_fetch_list, args)
         print("Epoch {}, valid_acc {:.6f}".format(epoch_id, valid_top1))
         # (TODO)save model
 
