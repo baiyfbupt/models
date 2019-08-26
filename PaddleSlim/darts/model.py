@@ -62,6 +62,8 @@ def cell(s0, s1, is_train, genotype, c_curr, reduction, reduction_prev,
         stride = 2 if reduction and indices[2 * i + 1] < 2 else 1
         h2 = OPS[op_names[2 * i + 1]](state[indices[2 * i + 1]], c_curr, stride,
                                       True, name + "/s" + str(i) + "/h2")
+        h1 = fluid.layers.dropout(h1, args.dropout)
+        h2 = fluid.layers.dropout(h2, args.dropout)
         if is_train and drop_prob > 0:
             if op_names[2 * i] is not 'skip_connect':
                 h1 = drop_path(h1, drop_prob, args)

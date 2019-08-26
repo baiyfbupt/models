@@ -76,12 +76,13 @@ add_arg('cutout_length',     int,   16,              "Cutout length.")
 add_arg('auxiliary',         bool,  True,            'Use auxiliary tower.')
 add_arg('auxiliary_weight',  float, 0.4,             "Weight for auxiliary loss.")
 add_arg('drop_path_prob',    float, 0.0,             "Drop path probability.")
+add_arg('dropout',           float, 0.0,             "Dropout probability.")
 add_arg('save',              str,   'EXP',           "Experiment name.")
 add_arg('grad_clip',         float, 5,               "Gradient clipping.")
 add_arg('image_shape',       str,   "3,32,32",       "Input image size")
 add_arg('arch',              str,   'DARTS',         "Which architecture to use")
 add_arg('report_freq',       int,   10,              'Report frequency')
-add_arg('with_mem_opt',      bool,  False,           "Whether to use memory optimization or not.")
+add_arg('with_mem_opt',      bool,  True,            "Whether to use memory optimization or not.")
 # yapf: enable
 
 output_dir = './output/train_model/'
@@ -147,13 +148,12 @@ def train(main_prog, exe, epoch_id, train_batches, fetch_list, args):
     loss = utility.AvgrageMeter()
     top1 = utility.AvgrageMeter()
     top5 = utility.AvgrageMeter()
-    for step_id in range(step_per_epoch):
+    for step_id, (image, label) in enumerate(train_batches()):
         if args.profile:
             if epoch_id == 0 and step_id == 5:
                 profiler.start_profiler("All")
             elif epoch_id == 0 and step_id == 7:
                 profiler.stop_profiler("total", "/tmp/profile")
-        image, label = next(train_batches)
         feed = {"image": image, "label": label}
         loss_v, top1_v, top5_v, lr = exe.run(
             main_prog, feed=feed, fetch_list=[v.name for v in fetch_list])
@@ -172,8 +172,7 @@ def valid(main_prog, exe, epoch_id, valid_batches, fetch_list, args):
     loss = utility.AvgrageMeter()
     top1 = utility.AvgrageMeter()
     top5 = utility.AvgrageMeter()
-    for step_id in range(step_per_epoch):
-        image, label = next(valid_batches)
+    for step_id, (image, label) in enumerate(valid_batches()):
         feed = {"image": image, "label": label}
         loss_v, top1_v, top5_v = exe.run(
             main_prog, feed=feed, fetch_list=[v.name for v in fetch_list])
@@ -213,15 +212,12 @@ def main(args):
     exe = fluid.Executor(place)
     exe.run(startup_prog)
     train_batches = reader.train_valid(
-        batch_size=batch_size_per_device,
+        batch_size=args.batch_size,
         is_train=True,
         is_shuffle=is_shuffle,
-        args=args)()
+        args=args)
     valid_batches = reader.train_valid(
-        batch_size=batch_size_per_device,
-        is_train=False,
-        is_shuffle=False,
-        args=args)()
+        batch_size=args.batch_size, is_train=False, is_shuffle=False, args=args)
 
     exec_strategy = fluid.ExecutionStrategy()
     exec_strategy.num_threads = 4 * devices_num
@@ -230,6 +226,7 @@ def main(args):
         train_fetch_list[0].persistable = True
         train_fetch_list[1].persistable = True
         train_fetch_list[2].persistable = True
+        train_fetch_list[3].persistable = True
         build_strategy.enable_inplace = True
         build_strategy.memory_optimize = True
 

@@ -76,15 +76,13 @@ def preprocess(sample, is_training, args):
     return img
 
 
-def reader_generator(datasets, batch_size, is_training, args):
+def reader_generator(datasets, batch_size, is_training, is_shuffle, args):
     def read_batch(datasets, args):
-        data_id = 0
-        while True:
-            data_id = data_id % len(datasets)
-            im, label = datasets[data_id]
+        if is_shuffle:
+            random.shuffle(datasets)
+        for im, label in datasets:
             im = preprocess(im, is_training, args)
             yield im, [int(label)]
-            data_id += 1
 
     def reader():
         batch_data = []
@@ -146,9 +144,11 @@ def train_search(batch_size, train_portion, is_shuffle, args):
 
     for pid in range(len(train_datasets_lists)):
         train_readers.append(
-            reader_generator(train_datasets_lists[pid], batch_size, True, args))
+            reader_generator(train_datasets_lists[pid], batch_size, True, True,
+                             args))
         val_readers.append(
-            reader_generator(val_datasets_lists[pid], batch_size, True, args))
+            reader_generator(val_datasets_lists[pid], batch_size, True, True,
+                             args))
     if args.use_multiprocess:
         reader = [
             paddle.reader.multiprocess_reader(train_readers, False),
@@ -171,7 +171,8 @@ def train_valid(batch_size, is_train, is_shuffle, args):
     multi_readers = []
     for pid in range(len(datasets_lists)):
         multi_readers.append(
-            reader_generator(datasets_lists[pid], batch_size, is_train, args))
+            reader_generator(datasets_lists[pid], batch_size, is_train,
+                             is_shuffle, args))
     if args.use_multiprocess:
         reader = paddle.reader.multiprocess_reader(multi_readers, False)
     else:
