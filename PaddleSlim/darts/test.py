@@ -24,28 +24,6 @@ import shutil
 import argparse
 import functools
 import numpy as np
-
-
-def set_paddle_flags(flags):
-    for key, value in flags.items():
-        if os.environ.get(key, None) is None:
-            os.environ[key] = str(value)
-
-
-# NOTE(paddle-dev): All of these flags should be
-# set before `import paddle`. Otherwise, it would
-# not take any effect.
-set_paddle_flags({
-    'FLAGS_eager_delete_tensor_gb': 0,  # enable GC
-    # You can omit the following settings, because the default
-    # value of FLAGS_memory_fraction_of_eager_deletion is 1,
-    # and default value of FLAGS_fast_eager_deletion_mode is 1
-    'FLAGS_memory_fraction_of_eager_deletion': 1,
-    'FLAGS_fast_eager_deletion_mode': 1,
-    # Setting the default used gpu memory
-    'FLAGS_fraction_of_gpu_memory_to_use': 0.98
-})
-
 import paddle.fluid as fluid
 from model import network_cifar as network
 import genotypes
@@ -64,12 +42,7 @@ add_arg('use_gpu',           bool,  True,            "Whether use GPU.")
 add_arg('init_channels',     int,   36,              "Init channel number.")
 add_arg('layers',            int,   20,              "Total number of layers.")
 add_arg('class_num',         int,   10,              "Class number of dataset.")
-add_arg('auxiliary',         bool,  True,            'Use auxiliary tower.')
-add_arg('auxiliary_weight',  float, 0.4,             "Weight for auxiliary loss.")
-add_arg('drop_path_prob',    float, 0.0,             "Drop path probability.")
 add_arg('dropout',           float, 0.0,             "Dropout probability.")
-add_arg('save',              str,   'EXP',           "Experiment name.")
-add_arg('grad_clip',         float, 5,               "Gradient clipping.")
 add_arg('image_shape',       str,   "3,32,32",       "Input image size")
 add_arg('model_dir',         str,   'eval_output',   "The path to load model.")
 add_arg('arch',              str,   'DARTS',         "Which architecture to use")
@@ -94,10 +67,10 @@ def build_program(main_prog, startup_prog, args):
                 c_in=args.init_channels,
                 num_classes=args.class_num,
                 layers=args.layers,
-                auxiliary=args.auxiliary,
+                auxiliary=False,
                 genotype=genotype,
                 stem_multiplier=3,
-                drop_prob=args.drop_path_prob,
+                drop_prob=0.0,
                 args=args,
                 name='model')
             top1 = fluid.layers.accuracy(input=logits, label=label, k=1)
