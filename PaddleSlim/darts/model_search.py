@@ -51,7 +51,12 @@ def mixed_op(x, c_out, stride, index, reduction, name):
                 name=name + "/mixed_bn_beta",
                 initializer=fluid.initializer.Constant(value=0),
                 trainable=False)
-            op = fluid.layers.batch_norm(op, param_attr=gama, bias_attr=beta)
+            op = fluid.layers.batch_norm(
+                op,
+                param_attr=gama,
+                bias_attr=beta,
+                moving_mean_name=name + "/mixed_bn_mean",
+                moving_variance_name=name + "/mixed_bn_variance")
         ops.append(fluid.layers.elementwise_mul(op, weight[index]))
         index += 1
     out = fluid.layers.sums(ops)
@@ -107,7 +112,9 @@ def model(x,
             initializer=ConstantInitializer(value=1)),
         bias_attr=fluid.ParamAttr(
             name=name + "/" + "bn0_offset",
-            initializer=ConstantInitializer(value=0)))
+            initializer=ConstantInitializer(value=0)),
+        moving_mean_name=name + "/bn0_mean",
+        moving_variance_name=name + "/bn0_variance")
     s0 = s1 = x
     reduction_prev = False
     c_curr = c_in

@@ -60,7 +60,7 @@ add_arg = functools.partial(utility.add_arguments, argparser=parser)
 add_arg('profile',           bool,  False,           "Enable profiler.")
 add_arg('use_multiprocess',  bool,  True,            "Whether use multiprocess reader.")
 add_arg('num_workers',       int,   4,               "The multiprocess reader number.")
-add_arg('data',              str,   'cifar-10',      "The dir of dataset.")
+add_arg('data',              str,   'dataset/cifar10',"The dir of dataset.")
 add_arg('batch_size',        int,   96,              "Minibatch size.")
 add_arg('learning_rate',     float, 0.025,           "The start learning rate.")
 add_arg('momentum',          float, 0.9,             "Momentum.")
@@ -70,14 +70,13 @@ add_arg('epochs',            int,   600,             "Epoch number.")
 add_arg('init_channels',     int,   36,              "Init channel number.")
 add_arg('layers',            int,   20,              "Total number of layers.")
 add_arg('class_num',         int,   10,              "Class number of dataset.")
-add_arg('model_save_dir',    str,   'output',        "The path to save model.")
+add_arg('model_save_dir',    str,   'eval_output',   "The path to save model.")
 add_arg('cutout',            bool,  True,            'Whether use cutout.')
 add_arg('cutout_length',     int,   16,              "Cutout length.")
 add_arg('auxiliary',         bool,  True,            'Use auxiliary tower.')
 add_arg('auxiliary_weight',  float, 0.4,             "Weight for auxiliary loss.")
 add_arg('drop_path_prob',    float, 0.0,             "Drop path probability.")
 add_arg('dropout',           float, 0.0,             "Dropout probability.")
-add_arg('save',              str,   'EXP',           "Experiment name.")
 add_arg('grad_clip',         float, 5,               "Gradient clipping.")
 add_arg('image_shape',       str,   "3,32,32",       "Input image size")
 add_arg('arch',              str,   'DARTS',         "Which architecture to use")
@@ -85,10 +84,6 @@ add_arg('report_freq',       int,   10,              'Report frequency')
 add_arg('with_mem_opt',      bool,  True,            "Whether to use memory optimization or not.")
 # yapf: enable
 
-output_dir = './output/train_model/'
-if not os.path.isdir(output_dir):
-    print("Path {} does not exist. Creating.".format(output_dir))
-    os.makedirs(output_dir)
 CIFAR10_TRAIN = 50000
 CIFAR10_VALID = 10000
 
@@ -227,10 +222,11 @@ def main(args):
         build_strategy.enable_inplace = True
         build_strategy.memory_optimize = True
 
-    train_prog = fluid.CompiledProgram(train_prog).with_data_parallel(
+    parallel_train_prog = fluid.CompiledProgram(train_prog).with_data_parallel(
         loss_name=train_fetch_list[0].name,
         build_strategy=build_strategy,
         exec_strategy=exec_strategy)
+    test_prog = fluid.CompiledProgram(test_prog)
 
     def save_model(postfix, program):
         model_path = os.path.join(args.model_save_dir, postfix)
@@ -240,13 +236,13 @@ def main(args):
         fluid.io.save_persistables(exe, model_path, main_program=program)
 
     for epoch_id in range(args.epochs):
-        train_top1 = train(train_prog, exe, epoch_id, train_reader,
+        train_top1 = train(parallel_train_prog, exe, epoch_id, train_reader,
                            train_fetch_list, args)
         print("Epoch {}, train_acc {:.6f}".format(epoch_id, train_top1))
         valid_top1 = valid(test_prog, exe, epoch_id, valid_reader,
                            valid_fetch_list, args)
         print("Epoch {}, valid_acc {:.6f}".format(epoch_id, valid_top1))
-        # (TODO)save model
+        save_model('eval_' + str(epoch_id), train_prog)
 
 
 if __name__ == '__main__':
