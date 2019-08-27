@@ -143,12 +143,11 @@ def build_program(main_prog, startup_prog, is_train, args):
     return outs
 
 
-def train(main_prog, exe, epoch_id, train_batches, fetch_list, args):
-    step_per_epoch = int(CIFAR10_TRAIN / args.batch_size)
+def train(main_prog, exe, epoch_id, train_reader, fetch_list, args):
     loss = utility.AvgrageMeter()
     top1 = utility.AvgrageMeter()
     top5 = utility.AvgrageMeter()
-    for step_id, (image, label) in enumerate(train_batches()):
+    for step_id, (image, label) in enumerate(train_reader()):
         if args.profile:
             if epoch_id == 0 and step_id == 5:
                 profiler.start_profiler("All")
@@ -167,12 +166,11 @@ def train(main_prog, exe, epoch_id, train_batches, fetch_list, args):
     return top1.avg[0]
 
 
-def valid(main_prog, exe, epoch_id, valid_batches, fetch_list, args):
-    step_per_epoch = int(CIFAR10_VALID / args.batch_size)
+def valid(main_prog, exe, epoch_id, valid_reader, fetch_list, args):
     loss = utility.AvgrageMeter()
     top1 = utility.AvgrageMeter()
     top5 = utility.AvgrageMeter()
-    for step_id, (image, label) in enumerate(valid_batches()):
+    for step_id, (image, label) in enumerate(valid_reader()):
         feed = {"image": image, "label": label}
         loss_v, top1_v, top5_v = exe.run(
             main_prog, feed=feed, fetch_list=[v.name for v in fetch_list])
@@ -189,7 +187,6 @@ def valid(main_prog, exe, epoch_id, valid_batches, fetch_list, args):
 def main(args):
     devices = os.getenv("CUDA_VISIBLE_DEVICES") or ""
     devices_num = len(devices.split(","))
-    batch_size_per_device = args.batch_size // devices_num
     is_shuffle = True
 
     startup_prog = fluid.Program()
@@ -211,12 +208,12 @@ def main(args):
     place = fluid.CUDAPlace(0) if args.use_gpu else fluid.CPUPlace()
     exe = fluid.Executor(place)
     exe.run(startup_prog)
-    train_batches = reader.train_valid(
+    train_reader = reader.train_valid(
         batch_size=args.batch_size,
         is_train=True,
         is_shuffle=is_shuffle,
         args=args)
-    valid_batches = reader.train_valid(
+    valid_reader = reader.train_valid(
         batch_size=args.batch_size, is_train=False, is_shuffle=False, args=args)
 
     exec_strategy = fluid.ExecutionStrategy()
@@ -243,10 +240,10 @@ def main(args):
         fluid.io.save_persistables(exe, model_path, main_program=program)
 
     for epoch_id in range(args.epochs):
-        train_top1 = train(train_prog, exe, epoch_id, train_batches,
+        train_top1 = train(train_prog, exe, epoch_id, train_reader,
                            train_fetch_list, args)
         print("Epoch {}, train_acc {:.6f}".format(epoch_id, train_top1))
-        valid_top1 = valid(test_prog, exe, epoch_id, valid_batches,
+        valid_top1 = valid(test_prog, exe, epoch_id, valid_reader,
                            valid_fetch_list, args)
         print("Epoch {}, valid_acc {:.6f}".format(epoch_id, valid_top1))
         # (TODO)save model

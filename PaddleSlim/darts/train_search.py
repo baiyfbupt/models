@@ -94,10 +94,77 @@ if not os.path.isdir(output_dir):
 
 CIFAR10 = 50000
 
+
+def genotype(test_prog, exe, place):
+    image_shape = [1] + [int(m) for m in args.image_shape.split(",")]
+    label_shape = [1, 1]
+    image_tensor = fluid.LoDTensor()
+    image_tensor.set(np.random.random(size=image_shape).astype('float32'), place)
+    label_tensor = fluid.LoDTensor()
+    label_tensor.set(np.random.random(size=label_shape).astype('int64'), place)
+    arch_names = utility.get_parameters(test_prog.global_block().all_parameters(), 'arch')[0]
+    feed = {"image_train": image_tensor, "label_train": label_tensor, "image_val": image_tensor, "label_val": label_tensor}
+    arch_values = exe.run(test_prog, feed=feed, fetch_list=arch_names)
+    # softmax
+    arch_values = [np.exp(arch_v) / np.sum(np.exp(arch_v)) for arch_v in arch_values]
+    alpha_normal = [i for i in zip(arch_names, arch_values) if 'weight1' in i[0]]
+    alpha_reduce = [i for i in zip(arch_names, arch_values) if 'weight2' in i[0]]
+    print('normal:')
+    print(np.array([pair[1] for pair in sorted(alpha_normal, key=lambda i:int(i[0].split('_')[1]))]))
+    print('reduce:')
+    print(np.array([pair[1] for pair in sorted(alpha_reduce, key=lambda i:int(i[0].split('_')[1]))]))
+    genotype = get_genotype(arch_names, arch_values)
+    print("genotype={}".format(genotype))
+
+
+def valid(epoch_id, valid_reader, fetch_list, test_prog, exe):
+    loss = utility.AvgrageMeter()
+    top1 = utility.AvgrageMeter()
+    top5 = utility.AvgrageMeter()
+    for step_id, (image_val, label_val) in enumerate(valid_reader()):
+        # use valid data to feed image_train and label_train
+        feed = {"image_train": image_val, "label_train": label_val, "image_val": image_val, "label_val": label_val}
+        loss_v, top1_v, top5_v = exe.run(test_prog, feed=feed, fetch_list=fetch_list)
+        loss.update(loss_v, args.batch_size)
+        top1.update(top1_v, args.batch_size)
+        top5.update(top5_v, args.batch_size)
+        if step_id % args.report_freq == 0:
+            print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), \
+                "Valid Epoch {}, Step {}, loss {:.3f}, acc_1 {:.6f}, acc_5 {:.6f}"\
+                .format(epoch_id, step_id, loss.avg[0], top1.avg[0], top5.avg[0]))
+    return top1.avg[0]
+
+def train(epoch_id, train_reader, valid_reader, fetch_list, arch_progs_list, train_prog, exe):
+    loss = utility.AvgrageMeter()
+    top1 = utility.AvgrageMeter()
+    top5 = utility.AvgrageMeter()
+    for step_id, ((image_train, label_train), (image_val, label_val)) in enumerate(zip(train_reader(), valid_reader())):
+        if args.profile:
+            if epoch_id == 0 and step_id == 1:
+                profiler.start_profiler("All")
+            elif epoch_id == 0 and step_id == 3:
+                profiler.stop_profiler("total", "/tmp/profile")
+        feed = {"image_train": image_train, "label_train": label_train, "image_val": image_val, "label_val": label_val}
+        exe.run(arch_progs_list[0], feed=feed)
+        exe.run(arch_progs_list[1], feed=feed)
+        exe.run(arch_progs_list[2], feed=feed)
+        exe.run(arch_progs_list[3], feed=feed)
+        exe.run(arch_progs_list[4], feed=feed)
+        exe.run(arch_progs_list[5], feed=feed)
+        lr, loss_v, top1_v, top5_v = exe.run(train_prog, feed=feed, fetch_list=[v.name for v in fetch_list])
+        loss.update(loss_v, args.batch_size)
+        top1.update(top1_v, args.batch_size)
+        top5.update(top5_v, args.batch_size)
+        if step_id % args.report_freq == 0:
+            print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), \
+                "Train Epoch {}, Step {}, Lr {:.8f}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}"\
+                .format(epoch_id, step_id, lr[0], loss.avg[0], top1.avg[0], top5.avg[0]))
+    return top1.avg[0]
+
+
 def main(args):
     devices = os.getenv("CUDA_VISIBLE_DEVICES") or ""
     devices_num = len(devices.split(","))
-    batch_size_per_device = args.batch_size // devices_num
     step_per_epoch = int(CIFAR10 * args.train_portion / args.batch_size)
     is_shuffle = True
 
@@ -118,7 +185,7 @@ def main(args):
             # Pytorch CosineAnnealingLR
             learning_rate = learning_rate / args.learning_rate * (args.learning_rate - args.learning_rate_min) + args.learning_rate_min
 
-        unrolled_optim_prog, model_plus_prog, pos_grad_prog, model_minus_prog, neg_grad_prog, arch_optim_prog, fetch = architect.compute_unrolled_step(image_train, label_train, image_val,
+        arch_progs_list, fetch = architect.compute_unrolled_step(image_train, label_train, image_val,
                                     label_val, data_prog, startup_prog, learning_rate, args)
 
         train_prog = data_prog.clone()
@@ -141,12 +208,10 @@ def main(args):
     place = fluid.CUDAPlace(0) if args.use_gpu else fluid.CPUPlace()
     exe = fluid.Executor(place)
     exe.run(startup_prog)
-    train_reader, valid_reader = reader.train_search(batch_size=batch_size_per_device, train_portion=args.train_portion, is_shuffle=is_shuffle, args=args)
-    train_batches = train_reader()
-    valid_batches = valid_reader()
+    train_reader, valid_reader = reader.train_search(batch_size=args.batch_size, train_portion=args.train_portion, is_shuffle=is_shuffle, args=args)
 
     exec_strategy = fluid.ExecutionStrategy()
-    exec_strategy.num_threads = 4
+    exec_strategy.num_threads = 4 * devices_num
     build_strategy = fluid.BuildStrategy()
     if args.with_mem_opt:
         learning_rate.persistable = True
@@ -155,27 +220,27 @@ def main(args):
         top5.persistable = True
         build_strategy.enable_inplace = True
         build_strategy.memory_optimize = True
-    unrolled_optim_prog = fluid.CompiledProgram(unrolled_optim_prog).with_data_parallel(
+    arch_progs_list[0] = fluid.CompiledProgram(arch_progs_list[0]).with_data_parallel(
                  loss_name=fetch[0].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
-    model_plus_prog = fluid.CompiledProgram(model_plus_prog).with_data_parallel(
+    arch_progs_list[1] = fluid.CompiledProgram(arch_progs_list[1]).with_data_parallel(
                  loss_name=fetch[1].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
-    pos_grad_prog = fluid.CompiledProgram(pos_grad_prog).with_data_parallel(
+    arch_progs_list[2] = fluid.CompiledProgram(arch_progs_list[2]).with_data_parallel(
                  loss_name=fetch[2].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
-    model_minus_prog = fluid.CompiledProgram(model_minus_prog).with_data_parallel(
+    arch_progs_list[3] = fluid.CompiledProgram(arch_progs_list[3]).with_data_parallel(
                  loss_name=fetch[3].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
-    neg_grad_prog = fluid.CompiledProgram(neg_grad_prog).with_data_parallel(
+    arch_progs_list[4] = fluid.CompiledProgram(arch_progs_list[4]).with_data_parallel(
                  loss_name=fetch[4].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
-    arch_optim_prog = fluid.CompiledProgram(arch_optim_prog).with_data_parallel(
+    arch_progs_list[5] = fluid.CompiledProgram(arch_progs_list[5]).with_data_parallel(
                  loss_name=fetch[5].name,
                  build_strategy=build_strategy,
                  exec_strategy=exec_strategy)
@@ -192,79 +257,15 @@ def main(args):
         print('save models to %s' % (model_path))
         fluid.io.save_persistables(exe, model_path, main_program=program)
 
-    def genotype(epoch_id, train_batches):
-        arch_names = utility.get_parameters(test_prog.global_block().all_parameters(), 'arch')[0]
-        image_train, label_train = next(train_batches)
-        feed = {"image_train": image_train, "label_train": label_train, "image_val": image_train, "label_val": label_train}
-        arch_values = exe.run(test_prog, feed=feed, fetch_list=arch_names)
-        # softmax
-        arch_values = [np.exp(arch_v) / np.sum(np.exp(arch_v)) for arch_v in arch_values]
-        alpha_normal = [i for i in zip(arch_names, arch_values) if 'weight1' in i[0]]
-        alpha_reduce = [i for i in zip(arch_names, arch_values) if 'weight2' in i[0]]
-        print('normal:')
-        print(np.array([pair[1] for pair in sorted(alpha_normal, key=lambda i:int(i[0].split('_')[1]))]))
-        print('reduce:')
-        print(np.array([pair[1] for pair in sorted(alpha_reduce, key=lambda i:int(i[0].split('_')[1]))]))
-        genotype = get_genotype(arch_names, arch_values)
-        print("genotype={}".format(genotype))
-
-
-    def valid(epoch_id, valid_batches, fetch_list):
-        loss = utility.AvgrageMeter()
-        top1 = utility.AvgrageMeter()
-        top5 = utility.AvgrageMeter()
-        for step_id in range(step_per_epoch):
-            image_val, label_val = next(valid_batches)
-            # use valid data to feed image_train and label_train
-            feed = {"image_train": image_val, "label_train": label_val, "image_val": image_val, "label_val": label_val}
-            loss_v, top1_v, top5_v = exe.run(test_prog, feed=feed, fetch_list=valid_fetch_list)
-            loss.update(loss_v, args.batch_size)
-            top1.update(top1_v, args.batch_size)
-            top5.update(top5_v, args.batch_size)
-            if step_id % args.report_freq == 0:
-                print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), \
-                    "Valid Epoch {}, Step {}, loss {:.3f}, acc_1 {:.6f}, acc_5 {:.6f}"\
-                    .format(epoch_id, step_id, loss.avg[0], top1.avg[0], top5.avg[0]))
-        return top1.avg[0]
-
-    def train(epoch_id, train_batches, valid_batches, fetch_list):
-        loss = utility.AvgrageMeter()
-        top1 = utility.AvgrageMeter()
-        top5 = utility.AvgrageMeter()
-        for step_id in range(step_per_epoch):
-            if args.profile:
-                if epoch_id == 0 and step_id == 1:
-                    profiler.start_profiler("All")
-                elif epoch_id == 0 and step_id == 3:
-                    profiler.stop_profiler("total", "/tmp/profile")
-            image_train, label_train = next(train_batches)
-            image_val, label_val = next(valid_batches)
-            feed = {"image_train": image_train, "label_train": label_train, "image_val": image_val, "label_val": label_val}
-            exe.run(unrolled_optim_prog, feed=feed)
-            exe.run(model_plus_prog, feed=feed)
-            exe.run(pos_grad_prog, feed=feed)
-            exe.run(model_minus_prog, feed=feed)
-            exe.run(neg_grad_prog, feed=feed)
-            exe.run(arch_optim_prog, feed=feed)
-            lr, loss_v, top1_v, top5_v = exe.run(train_prog, feed=feed, fetch_list=[v.name for v in fetch_list])
-            loss.update(loss_v, args.batch_size)
-            top1.update(top1_v, args.batch_size)
-            top5.update(top5_v, args.batch_size)
-            if step_id % args.report_freq == 0:
-                print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), \
-                    "Train Epoch {}, Step {}, Lr {:.8f}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}"\
-                    .format(epoch_id, step_id, lr[0], loss.avg[0], top1.avg[0], top5.avg[0]))
-        return top1.avg[0]
-
 
     for epoch_id in range(args.epochs):
         # get genotype
-        genotype(epoch_id, train_batches)
+        genotype(test_prog, exe, place)
         train_fetch_list = [learning_rate, loss, top1, top5]
-        train_top1 = train(epoch_id, train_batches, valid_batches, train_fetch_list)
+        train_top1 = train(epoch_id, train_reader, valid_reader, train_fetch_list, arch_progs_list, train_prog, exe)
         print("Epoch {}, train_acc {:.6f}".format(epoch_id, train_top1))
         valid_fetch_list = [loss, top1, top5]
-        valid_top1 = valid(epoch_id, valid_batches, valid_fetch_list)
+        valid_top1 = valid(epoch_id, valid_reader, valid_fetch_list, test_prog, exe)
         print("Epoch {}, valid_acc {:.6f}".format(epoch_id, valid_top1))
         # (TODO)save model
 

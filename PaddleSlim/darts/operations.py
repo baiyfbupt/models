@@ -20,7 +20,6 @@ import paddle.fluid as fluid
 from paddle.fluid.param_attr import ParamAttr
 from paddle.fluid.initializer import UniformInitializer, ConstantInitializer
 
-INT_MAX = sys.maxsize >> 32
 
 OPS = {
     'none':
@@ -97,7 +96,7 @@ def identity(x):
 def factorized_reduce(x, c_out, affine=True, name=''):
     assert c_out % 2 == 0
     x = fluid.layers.relu(x)
-    x_sliced = fluid.layers.slice(x, [2, 3], [1, 1], [INT_MAX, INT_MAX])
+    x_sliced = x[:, :, 1:, 1:]
     k = (1. / x.shape[1] / 1 / 1)**0.5
     conv1 = fluid.layers.conv2d(
         x,

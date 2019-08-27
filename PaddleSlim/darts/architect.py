@@ -232,4 +232,8 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
         print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
               "leader apply_grad done")
         fetch.append(unrolled_valid_loss)
-    return unrolled_optim_prog, model_plus_prog, pos_grad_prog, model_minus_prog, neg_grad_prog, arch_optim_prog, fetch
+        arch_progs_list = [
+            unrolled_optim_prog, model_plus_prog, pos_grad_prog,
+            model_minus_prog, neg_grad_prog, arch_optim_prog
+        ]
+    return arch_progs_list, fetch
