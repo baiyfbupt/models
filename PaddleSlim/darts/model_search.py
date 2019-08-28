@@ -77,7 +77,7 @@ def cell(s0, s1, steps, multiplier, c_out, reduction, reduction_prev, name):
             stride = 2 if reduction and j < 2 else 1
             temp.append(
                 mixed_op(state[j], c_out, stride, offset + j, reduction, name +
-                         "/s" + str(i)))
+                         "/s" + str(offset + j)))
         offset += len(state)
         state.append(fluid.layers.sums(temp))
     out = fluid.layers.concat(input=state[-multiplier:], axis=1)

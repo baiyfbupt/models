@@ -239,6 +239,9 @@ def main(args):
                 name="model")
             top1 = fluid.layers.accuracy(input=logits, label=label_train, k=1)
             top5 = fluid.layers.accuracy(input=logits, label=label_train, k=5)
+            print("param size = {:.6f}MB".format(
+                utility.count_parameters_in_MB(train_prog.global_block()
+                                               .all_parameters(), 'model')))
             test_prog = train_prog.clone(for_test=True)
 
             model_var = utility.get_parameters(
