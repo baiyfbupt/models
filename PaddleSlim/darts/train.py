@@ -80,7 +80,7 @@ add_arg('dropout',           float, 0.0,             "Dropout probability.")
 add_arg('grad_clip',         float, 5,               "Gradient clipping.")
 add_arg('image_shape',       str,   "3,32,32",       "Input image size")
 add_arg('arch',              str,   'DARTS',         "Which architecture to use")
-add_arg('report_freq',       int,   10,              'Report frequency')
+add_arg('report_freq',       int,   50,              'Report frequency')
 add_arg('with_mem_opt',      bool,  True,            "Whether to use memory optimization or not.")
 # yapf: enable
 

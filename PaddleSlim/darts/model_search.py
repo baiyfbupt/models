@@ -44,19 +44,20 @@ def mixed_op(x, c_out, stride, index, reduction, name):
         op = OPS[primitive](x, c_out, stride, False, name)
         if 'pool' in primitive:
             gama = ParamAttr(
-                name=name + "/mixed_bn_gama",
+                name=name + '/' + primitive + "/mixed_bn_gama",
                 initializer=fluid.initializer.Constant(value=1),
                 trainable=False)
             beta = ParamAttr(
-                name=name + "/mixed_bn_beta",
+                name=name + '/' + primitive + "/mixed_bn_beta",
                 initializer=fluid.initializer.Constant(value=0),
                 trainable=False)
             op = fluid.layers.batch_norm(
                 op,
                 param_attr=gama,
                 bias_attr=beta,
-                moving_mean_name=name + "/mixed_bn_mean",
-                moving_variance_name=name + "/mixed_bn_variance")
+                moving_mean_name=name + '/' + primitive + "/mixed_bn_mean",
+                moving_variance_name=name + '/' + primitive +
+                "/mixed_bn_variance")
         ops.append(fluid.layers.elementwise_mul(op, weight[index]))
         index += 1
     out = fluid.layers.sums(ops)
@@ -101,17 +102,16 @@ def model(x,
         3,
         padding=1,
         param_attr=fluid.ParamAttr(
-            name=name + "/" + "conv_0",
+            name=name + "/conv_0",
             initializer=UniformInitializer(
                 low=-k, high=k)),
         bias_attr=False)
     x = fluid.layers.batch_norm(
         x,
         param_attr=fluid.ParamAttr(
-            name=name + "/" + "bn0_scale",
-            initializer=ConstantInitializer(value=1)),
+            name=name + "/bn0_scale", initializer=ConstantInitializer(value=1)),
         bias_attr=fluid.ParamAttr(
-            name=name + "/" + "bn0_offset",
+            name=name + "/bn0_offset",
             initializer=ConstantInitializer(value=0)),
         moving_mean_name=name + "/bn0_mean",
         moving_variance_name=name + "/bn0_variance")
@@ -133,11 +133,11 @@ def model(x,
     logits = fluid.layers.fc(out,
                              num_classes,
                              param_attr=fluid.ParamAttr(
-                                 name=name + "/" + "fc_weights",
+                                 name=name + "/fc_weights",
                                  initializer=UniformInitializer(
                                      low=-k, high=k)),
                              bias_attr=fluid.ParamAttr(
-                                 name=name + "/" + "fc_bias",
+                                 name=name + "/fc_bias",
                                  initializer=UniformInitializer(
                                      low=-k, high=k)))
     train_loss = fluid.layers.reduce_mean(

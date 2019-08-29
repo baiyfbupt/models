@@ -44,7 +44,7 @@ set_paddle_flags({
     'FLAGS_memory_fraction_of_eager_deletion': 1,
     'FLAGS_fast_eager_deletion_mode': 1,
     # Setting the default used gpu memory
-    'FLAGS_fraction_of_gpu_memory_to_use': 0.92
+    'FLAGS_fraction_of_gpu_memory_to_use': 0.98
 })
 
 import paddle.fluid as fluid
@@ -59,7 +59,7 @@ add_arg = functools.partial(utility.add_arguments, argparser=parser)
 
 # yapf: disable
 add_arg('profile',           bool,  False,           "Enable profiler.")
-add_arg('report_freq',       int,   10,              "Report frequency.")
+add_arg('report_freq',       int,   50,              "Report frequency.")
 add_arg('use_multiprocess',  bool,  True,            "Whether use multiprocess reader.")
 add_arg('num_workers',       int,   8,               "The multiprocess reader number.")
 add_arg('data',              str,   'dataset/cifar10',"The dir of dataset.")
@@ -76,7 +76,6 @@ add_arg('class_num',         int,   10,              "Class number of dataset.")
 add_arg('model_save_dir',    str,   'search_output',  "The path to save model.")
 add_arg('cutout',            bool,  True,            'Whether use cutout.')
 add_arg('cutout_length',     int,   16,              "Cutout length.")
-add_arg('drop_path_prob',    float, 0.3,             "Drop path probability.")
 add_arg('grad_clip',         float, 5,               "Gradient clipping.")
 add_arg('train_portion',     float, 0.5,             "Portion of training data.")
 add_arg('arch_learning_rate',float, 3e-4,            "Learning rate for arch encoding.")
