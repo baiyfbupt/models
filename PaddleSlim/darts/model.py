@@ -67,18 +67,14 @@ def classifier(x, num_classes, name):
     return out
 
 
-def drop_path(x, drop_prob, args):
-    if drop_prob > 0:
-        keep_prob = 1 - drop_prob
-        mask = fluid.layers.assign(
-            np.random.binomial(
-                1, keep_prob, size=args.batch_size).astype(np.float32))
-        x = fluid.layers.elementwise_mul(x / keep_prob, mask, axis=0)
+def drop_path(x, drop_prob, mask, args):
+    keep_prob = 1 - drop_prob
+    x = fluid.layers.elementwise_mul(x / keep_prob, mask, axis=0)
     return x
 
 
 def cell(s0, s1, is_train, genotype, c_curr, reduction, reduction_prev,
-         drop_prob, args, name):
+         do_drop_path, drop_prob, drop_path_cell, args, name):
     if reduction:
         op_names, indices = zip(*genotype.reduce)
         concat = genotype.reduce_concat
@@ -102,14 +98,11 @@ def cell(s0, s1, is_train, genotype, c_curr, reduction, reduction_prev,
         stride = 2 if reduction and indices[2 * i + 1] < 2 else 1
         h2 = OPS[op_names[2 * i + 1]](state[indices[2 * i + 1]], c_curr, stride,
                                       True, name + "/s" + str(i) + "/h2")
-        if args.dropout > 0:
-            h1 = fluid.layers.dropout(h1, args.dropout)
-            h2 = fluid.layers.dropout(h2, args.dropout)
-        if is_train and drop_prob > 0:
+        if is_train and do_drop_path:
             if op_names[2 * i] is not 'skip_connect':
-                h1 = drop_path(h1, drop_prob, args)
+                h1 = drop_path(h1, drop_prob, drop_path_cell[i][0], args)
             if op_names[2 * i + 1] is not 'skip_connect':
-                h2 = drop_path(h2, drop_prob, args)
+                h2 = drop_path(h2, drop_prob, drop_path_cell[i][1], args)
         state.append(h1 + h2)
     out = fluid.layers.concat(input=state[-multiplier:], axis=1)
     return out
@@ -140,7 +133,8 @@ def auxiliary_cifar(x, num_classes, name):
 
 
 def network_cifar(x, is_train, c_in, num_classes, layers, auxiliary, genotype,
-                  stem_multiplier, drop_prob, args, name):
+                  stem_multiplier, do_drop_path, drop_prob, drop_path_mask,
+                  args, name):
     c_curr = stem_multiplier * c_in
     x = conv_bn(
         x=x,
@@ -159,8 +153,13 @@ def network_cifar(x, is_train, c_in, num_classes, layers, auxiliary, genotype,
             reduction = True
         else:
             reduction = False
+        if do_drop_path and is_train:
+            drop_path_cell = drop_path_mask[i]
+        else:
+            drop_path_cell = drop_path_mask
         s0, s1 = s1, cell(s0, s1, is_train, genotype, c_curr, reduction,
-                          reduction_prev, drop_prob, args, name + "/l" + str(i))
+                          reduction_prev, do_drop_path, drop_prob,
+                          drop_path_cell, args, name + "/l" + str(i))
         reduction_prev = reduction
         if i == 2 * layers // 3:
             if auxiliary and is_train:

@@ -75,8 +75,7 @@ add_arg('cutout',            bool,  True,            'Whether use cutout.')
 add_arg('cutout_length',     int,   16,              "Cutout length.")
 add_arg('auxiliary',         bool,  True,            'Use auxiliary tower.')
 add_arg('auxiliary_weight',  float, 0.4,             "Weight for auxiliary loss.")
-add_arg('drop_path_prob',    float, 0.0,             "Drop path probability.")
-add_arg('dropout',           float, 0.0,             "Dropout probability.")
+add_arg('drop_path_prob',    float, 0.2,             "Drop path probability.")
 add_arg('grad_clip',         float, 5,               "Gradient clipping.")
 add_arg('image_shape',       str,   "3,32,32",       "Input image size")
 add_arg('arch',              str,   'DARTS',         "Which architecture to use")
@@ -90,12 +89,27 @@ CIFAR10_VALID = 10000
 
 def build_program(main_prog, startup_prog, is_train, args):
     image_shape = [int(m) for m in args.image_shape.split(",")]
+    num_cells = 4
     with fluid.program_guard(main_prog, startup_prog):
         with fluid.unique_name.guard():
             image = fluid.layers.data(
                 name="image", shape=image_shape, dtype="float32")
             label = fluid.layers.data(name="label", shape=[1], dtype="int64")
+            drop_path_prob = ''
+            drop_path_mask = ''
+            if args.drop_path_prob > 0 and is_train:
+                drop_path_prob = fluid.layers.data(
+                    name="drop_path_prob",
+                    shape=[1],
+                    append_batch_size=False,
+                    dtype="float32")
+                drop_path_mask = fluid.layers.data(
+                    name="drop_path_mask",
+                    shape=[args.layers, num_cells, 2, args.batch_size],
+                    append_batch_size=False,
+                    dtype="float32")
             genotype = eval("genotypes.%s" % args.arch)
+            do_drop_path = args.drop_path_prob > 0
             logits, logits_aux = network(
                 x=image,
                 is_train=is_train,
@@ -105,7 +119,9 @@ def build_program(main_prog, startup_prog, is_train, args):
                 auxiliary=args.auxiliary,
                 genotype=genotype,
                 stem_multiplier=3,
-                drop_prob=args.drop_path_prob,
+                do_drop_path=do_drop_path,
+                drop_prob=drop_path_prob,
+                drop_path_mask=drop_path_mask,
                 args=args,
                 name='model')
             top1 = fluid.layers.accuracy(input=logits, label=label, k=1)
@@ -148,7 +164,22 @@ def train(main_prog, exe, epoch_id, train_reader, fetch_list, args):
                 profiler.start_profiler("All")
             elif epoch_id == 0 and step_id == 7:
                 profiler.stop_profiler("total", "/tmp/profile")
-        feed = {"image": image, "label": label}
+        if args.drop_path_prob > 0:
+            num_cells = 4
+            drop_path_prob = [args.drop_path_prob * epoch_id / args.epochs]
+            drop_path_mask = 1 - np.random.binomial(
+                1,
+                drop_path_prob,
+                size=[args.layers, num_cells, 2, args.batch_size]).astype(
+                    np.float32)
+            feed = {
+                "image": image,
+                "label": label,
+                "drop_path_prob": drop_path_prob,
+                "drop_path_mask": drop_path_mask
+            }
+        else:
+            feed = {"image": image, "label": label}
         loss_v, top1_v, top5_v, lr = exe.run(
             main_prog, feed=feed, fetch_list=[v.name for v in fetch_list])
         loss.update(loss_v, args.batch_size)
