@@ -16,6 +16,11 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import logging
+FORMAT = '%(asctime)s-%(levelname)s: %(message)s'
+logging.basicConfig(level=logging.INFO, format=FORMAT)
+logger = logging.getLogger(__name__)
+
 import paddle.fluid as fluid
 import utility
 import time
@@ -64,9 +69,7 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
             unrolled_train_loss,
             parameter_list=[v.name for v in unrolled_model_var])
         fetch.append(unrolled_train_loss)
-    print(
-        time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-        "get unrolled_model")
+    logger.info("get unrolled_model")
 
     arch_optim_prog = data_prog.clone()
     with fluid.program_guard(arch_optim_prog, startup_prog):
@@ -102,7 +105,7 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
         for param, grad in model_params_grads:
             param = fluid.layers.elementwise_add(
                 param, fluid.layers.elementwise_mul(grad, eps))
-        print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), "get w+")
+        logger.info("get w+")
 
         logits, train_loss = model(
             image_train,
@@ -115,15 +118,13 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
         grads_names = [v.name for v in train_grads_pos]
         for name in grads_names:
             arch_optim_prog.global_block()._rename_var(name, name + '_pos')
-        print(
-            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-            "get train_gards_pos")
+        logger.info("get train_gards_pos")
 
         # w- = w - eps*dw`"""
         for param, grad in model_params_grads:
             param = fluid.layers.elementwise_add(
                 param, fluid.layers.elementwise_mul(grad, eps * -2))
-        print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), "get w-")
+        logger.info("get w-")
 
         logits, train_loss = model(
             image_train,
@@ -135,15 +136,13 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
         train_grads_neg = fluid.gradients(train_loss, arch_var)
         for name in grads_names:
             arch_optim_prog.global_block()._rename_var(name, name + '_neg')
-        print(
-            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-            "get train_gards_neg")
+        logger.info("get train_gards_neg")
 
         # recover w
         for param, grad in model_params_grads:
             param = fluid.layers.elementwise_add(
                 param, fluid.layers.elementwise_mul(grad, eps))
-        print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), "get w")
+        logger.info("get w")
 
         leader_opt = fluid.optimizer.Adam(
             args.arch_learning_rate,
@@ -167,9 +166,7 @@ def compute_unrolled_step(image_train, label_train, image_val, label_val,
             arch_params_grads[i] = (var, grad - (
                 (grads_p[i] - grads_n[i]) / (eps * 2)) * lr)
         leader_opt.apply_gradients(arch_params_grads)
-        print(
-            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-            "update alpha")
+        logger.info("update alpha")
         fetch.append(unrolled_valid_loss)
         arch_progs_list = [unrolled_model_prog, arch_optim_prog]
     return arch_progs_list, fetch

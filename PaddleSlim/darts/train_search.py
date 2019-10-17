@@ -26,6 +26,11 @@ import functools
 import numpy as np
 np.set_printoptions(formatter={'float': '{: 0.4f}'.format})
 
+import logging
+FORMAT = '%(asctime)s-%(levelname)s: %(message)s'
+logging.basicConfig(level=logging.INFO, format=FORMAT)
+logger = logging.getLogger(__name__)
+
 
 def set_paddle_flags(flags):
     for key, value in flags.items():
@@ -128,7 +133,7 @@ def genotype(test_prog, exe, place):
                 alpha_reduce, key=lambda i: int(i[0].split('_')[1]))
         ]))
     genotype = get_genotype(arch_names, arch_values)
-    print("genotype={}".format(genotype))
+    logger.info('genotype = %s', genotype)
 
 
 def valid(epoch_id, valid_reader, fetch_list, test_prog, exe):
@@ -150,9 +155,10 @@ def valid(epoch_id, valid_reader, fetch_list, test_prog, exe):
         top1.update(top1_v, args.batch_size)
         top5.update(top5_v, args.batch_size)
         if step_id % args.report_freq == 0:
-            print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), \
-                "Valid Epoch {}, Step {}, loss {:.3f}, acc_1 {:.6f}, acc_5 {:.6f}"\
-                .format(epoch_id, step_id, loss.avg[0], top1.avg[0], top5.avg[0]))
+            logger.info(
+                "Valid Epoch {}, Step {}, loss {:.3f}, acc_1 {:.6f}, acc_5 {:.6f}".
+                format(epoch_id, step_id, loss.avg[0], top1.avg[0], top5.avg[
+                    0]))
     return top1.avg[0]
 
 
@@ -183,9 +189,10 @@ def train(epoch_id, train_reader, valid_reader, fetch_list, arch_progs_list,
         top1.update(top1_v, args.batch_size)
         top5.update(top5_v, args.batch_size)
         if step_id % args.report_freq == 0:
-            print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), \
-                "Train Epoch {}, Step {}, Lr {:.8f}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}"\
-                .format(epoch_id, step_id, lr[0], loss.avg[0], top1.avg[0], top5.avg[0]))
+            logger.info(
+                "Train Epoch {}, Step {}, Lr {:.8f}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}".
+                format(epoch_id, step_id, lr[0], loss.avg[0], top1.avg[0],
+                       top5.avg[0]))
     return top1.avg[0]
 
 
@@ -201,19 +208,17 @@ def main(args):
     test_prog = fluid.Program()
 
     image_shape = [int(m) for m in args.image_shape.split(",")]
-    print(
-        time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-        "Constructing graph...")
+    logger.info("Constructing graph...")
     with fluid.unique_name.guard():
         with fluid.program_guard(data_prog, startup_prog):
-            image_train = fluid.layers.data(
-                name="image_train", shape=image_shape, dtype="float32")
-            label_train = fluid.layers.data(
-                name="label_train", shape=[1], dtype="int64")
-            image_val = fluid.layers.data(
-                name="image_val", shape=image_shape, dtype="float32")
-            label_val = fluid.layers.data(
-                name="label_val", shape=[1], dtype="int64")
+            image_train = fluid.data(
+                name="image_train", shape=[None] + image_shape, dtype="float32")
+            label_train = fluid.data(
+                name="label_train", shape=[None, 1], dtype="int64")
+            image_val = fluid.data(
+                name="image_val", shape=[None] + image_shape, dtype="float32")
+            label_val = fluid.data(
+                name="label_val", shape=[None, 1], dtype="int64")
             learning_rate = fluid.layers.cosine_decay(
                 args.learning_rate, 4 * step_per_epoch, args.epochs)
             # Pytorch CosineAnnealingLR
@@ -236,7 +241,7 @@ def main(args):
                 name="model")
             top1 = fluid.layers.accuracy(input=logits, label=label_train, k=1)
             top5 = fluid.layers.accuracy(input=logits, label=label_train, k=5)
-            print("param size = {:.6f}MB".format(
+            logger.info("param size = {:.6f}MB".format(
                 utility.count_parameters_in_MB(train_prog.global_block()
                                                .all_parameters(), 'model')))
             test_prog = train_prog.clone(for_test=True)
@@ -255,9 +260,7 @@ def main(args):
             follower_opt.minimize(
                 loss, parameter_list=[v.name for v in model_var])
 
-    print(
-        time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-        "Construct graph done")
+    logger.info("Construct graph done")
     place = fluid.CUDAPlace(0) if args.use_gpu else fluid.CPUPlace()
     exe = fluid.Executor(place)
     exe.run(startup_prog)
@@ -297,7 +300,7 @@ def main(args):
         model_path = os.path.join(args.model_save_dir, postfix)
         if os.path.isdir(model_path):
             shutil.rmtree(model_path)
-        print('save models to %s' % (model_path))
+        logger.info('save models to %s' % (model_path))
         fluid.io.save_persistables(exe, model_path, main_program=program)
 
     for epoch_id in range(args.epochs):
@@ -307,11 +310,11 @@ def main(args):
         train_top1 = train(epoch_id, train_reader, valid_reader,
                            train_fetch_list, arch_progs_list,
                            parallel_train_prog, exe)
-        print("Epoch {}, train_acc {:.6f}".format(epoch_id, train_top1))
+        logger.info("Epoch {}, train_acc {:.6f}".format(epoch_id, train_top1))
         valid_fetch_list = [loss, top1, top5]
         valid_top1 = valid(epoch_id, valid_reader, valid_fetch_list,
                            compiled_test_prog, exe)
-        print("Epoch {}, valid_acc {:.6f}".format(epoch_id, valid_top1))
+        logger.info("Epoch {}, valid_acc {:.6f}".format(epoch_id, valid_top1))
         save_model('search_' + str(epoch_id), train_prog)
 
 

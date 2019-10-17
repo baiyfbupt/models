@@ -25,6 +25,11 @@ import argparse
 import functools
 import numpy as np
 
+import logging
+FORMAT = '%(asctime)s-%(levelname)s: %(message)s'
+logging.basicConfig(level=logging.INFO, format=FORMAT)
+logger = logging.getLogger(__name__)
+
 
 def set_paddle_flags(flags):
     for key, value in flags.items():
@@ -101,9 +106,9 @@ def build_program(main_prog, startup_prog, is_train, args):
     image_shape = [int(m) for m in args.image_shape.split(",")]
     with fluid.program_guard(main_prog, startup_prog):
         with fluid.unique_name.guard():
-            image = fluid.layers.data(
-                name="image", shape=image_shape, dtype="float32")
-            label = fluid.layers.data(name="label", shape=[1], dtype="int64")
+            image = fluid.data(
+                name="image", shape=[None] + image_shape, dtype="float32")
+            label = fluid.data(name="label", shape=[None, 1], dtype="int64")
             genotype = eval("genotypes.%s" % args.arch)
             logits, logits_aux = network(
                 x=image,
@@ -162,9 +167,10 @@ def train(main_prog, exe, epoch_id, train_reader, fetch_list, args):
         top1.update(top1_v, args.batch_size)
         top5.update(top5_v, args.batch_size)
         if step_id % args.report_freq == 0:
-            print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),\
-                "Train Epoch {}, Step {}, Lr {:.8f}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}"\
-                .format(epoch_id, step_id, lr[0], loss.avg[0], top1.avg[0], top5.avg[0]))
+            logger.info(
+                "Train Epoch {}, Step {}, Lr {:.8f}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}".
+                format(epoch_id, step_id, lr[0], loss.avg[0], top1.avg[0],
+                       top5.avg[0]))
     return top1.avg[0]
 
 
@@ -180,9 +186,10 @@ def valid(main_prog, exe, epoch_id, valid_reader, fetch_list, args):
         top1.update(top1_v, args.batch_size)
         top5.update(top5_v, args.batch_size)
         if step_id % args.report_freq == 0:
-            print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),\
-                "Valid Epoch {}, Step {}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}"\
-                .format(epoch_id, step_id, loss.avg[0], top1.avg[0], top5.avg[0]))
+            logger.info(
+                "Valid Epoch {}, Step {}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}".
+                format(epoch_id, step_id, loss.avg[0], top1.avg[0], top5.avg[
+                    0]))
     return top1.avg[0]
 
 
@@ -205,7 +212,7 @@ def main(args):
         is_train=False,
         args=args)
 
-    print("param size = {:.6f}MB".format(
+    logger.info("param size = {:.6f}MB".format(
         utility.count_parameters_in_MB(train_prog.global_block()
                                        .all_parameters(), 'model')))
     test_prog = test_prog.clone(for_test=True)
@@ -241,16 +248,16 @@ def main(args):
         model_path = os.path.join(args.model_save_dir, postfix)
         if os.path.isdir(model_path):
             shutil.rmtree(model_path)
-        print('save models to %s' % (model_path))
+        logger.info('save models to %s' % (model_path))
         fluid.io.save_persistables(exe, model_path, main_program=program)
 
     for epoch_id in range(args.epochs):
         train_top1 = train(parallel_train_prog, exe, epoch_id, train_reader,
                            train_fetch_list, args)
-        print("Epoch {}, train_acc {:.6f}".format(epoch_id, train_top1))
+        logger.info("Epoch {}, train_acc {:.6f}".format(epoch_id, train_top1))
         valid_top1 = valid(test_prog, exe, epoch_id, valid_reader,
                            valid_fetch_list, args)
-        print("Epoch {}, valid_acc {:.6f}".format(epoch_id, valid_top1))
+        logger.info("Epoch {}, valid_acc {:.6f}".format(epoch_id, valid_top1))
         save_model('eval_' + str(epoch_id), train_prog)
 
 

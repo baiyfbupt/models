@@ -30,6 +30,11 @@ import genotypes
 import reader
 import utility
 
+import logging
+FORMAT = '%(asctime)s-%(levelname)s: %(message)s'
+logging.basicConfig(level=logging.INFO, format=FORMAT)
+logger = logging.getLogger(__name__)
+
 parser = argparse.ArgumentParser(description=__doc__)
 add_arg = functools.partial(utility.add_arguments, argparser=parser)
 
@@ -54,9 +59,9 @@ def build_program(main_prog, startup_prog, args):
     image_shape = [int(m) for m in args.image_shape.split(",")]
     with fluid.program_guard(main_prog, startup_prog):
         with fluid.unique_name.guard():
-            image = fluid.layers.data(
-                name="image", shape=image_shape, dtype="float32")
-            label = fluid.layers.data(name="label", shape=[1], dtype="int64")
+            image = fluid.data(
+                name="image", shape=[None] + image_shape, dtype="float32")
+            label = fluid.data(name="label", shape=[None, 1], dtype="int64")
             genotype = eval("genotypes.%s" % args.arch)
             drop_path_prob = ''
             drop_path_mask = ''
@@ -94,9 +99,8 @@ def infer(main_prog, exe, valid_reader, fetch_list, args):
         top1.update(top1_v, args.batch_size)
         top5.update(top5_v, args.batch_size)
         if step_id % args.report_freq == 0:
-            print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),\
-                "Test Step {}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}"\
-                .format(step_id, loss.avg[0], top1.avg[0], top5.avg[0]))
+            logger.info("Test Step {}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}".
+                        format(step_id, loss.avg[0], top1.avg[0], top5.avg[0]))
     return top1.avg[0]
 
 
@@ -120,7 +124,7 @@ def main(args):
     infer_prog = fluid.CompiledProgram(infer_prog)
 
     top1 = infer(infer_prog, exe, valid_reader, infer_fetch_list, args)
-    print("test_acc {:.6f}".format(top1))
+    logger.info("test_acc {:.6f}".format(top1))
 
 
 if __name__ == '__main__':
