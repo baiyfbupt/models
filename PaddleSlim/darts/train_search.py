@@ -303,6 +303,7 @@ def main(args):
         logger.info('save models to %s' % (model_path))
         fluid.io.save_persistables(exe, model_path, main_program=program)
 
+    best_acc = 0
     for epoch_id in range(args.epochs):
         # get genotype
         genotype(test_prog, exe, place)
@@ -314,7 +315,8 @@ def main(args):
         valid_fetch_list = [loss, top1, top5]
         valid_top1 = valid(epoch_id, valid_reader, valid_fetch_list,
                            compiled_test_prog, exe)
-        logger.info("Epoch {}, valid_acc {:.6f}".format(epoch_id, valid_top1))
+        logger.info("Epoch {}, valid_acc {:.6f}, best valid_acc {:6f}".format(
+            epoch_id, valid_top1, max(valid_top1, best_acc)))
         save_model('search_' + str(epoch_id), train_prog)
 
 

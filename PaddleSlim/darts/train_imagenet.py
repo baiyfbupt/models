@@ -251,14 +251,18 @@ def main(args):
         logger.info('save models to %s' % (model_path))
         fluid.io.save_persistables(exe, model_path, main_program=program)
 
+    best_acc = 0
     for epoch_id in range(args.epochs):
         train_top1 = train(parallel_train_prog, exe, epoch_id, train_reader,
                            train_fetch_list, args)
         logger.info("Epoch {}, train_acc {:.6f}".format(epoch_id, train_top1))
         valid_top1 = valid(test_prog, exe, epoch_id, valid_reader,
                            valid_fetch_list, args)
-        logger.info("Epoch {}, valid_acc {:.6f}".format(epoch_id, valid_top1))
-        save_model('eval_' + str(epoch_id), train_prog)
+        if valid_top1 > best_acc:
+            best_acc = valid_top1
+            save_model('imagenet_model', train_prog)
+        logger.info("Epoch {}, valid_acc {:.6f}, best_valid_acc {:6f}".format(
+            epoch_id, valid_top1, best_acc))
 
 
 if __name__ == '__main__':
