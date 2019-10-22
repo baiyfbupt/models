@@ -66,7 +66,7 @@ add_arg = functools.partial(utility.add_arguments, argparser=parser)
 add_arg('profile',           bool,  False,           "Enable profiler.")
 add_arg('use_multiprocess',  bool,  True,            "Whether use multiprocess reader.")
 add_arg('num_workers',       int,   4,               "The multiprocess reader number.")
-add_arg('data',              str,   'dataset/imagenet',"The dir of dataset.")
+add_arg('data_dir',          str,   'dataset/ILSVRC2012',"The dir of dataset.")
 add_arg('batch_size',        int,   128,             "Minibatch size.")
 add_arg('learning_rate',     float, 0.1,             "The start learning rate.")
 add_arg('decay_rate',        float, 0.97,            "The lr decay rate.")
@@ -147,20 +147,21 @@ def build_program(main_prog, startup_prog, is_train, args):
                 outs = [loss, top1, top5, learning_rate]
             else:
                 outs = [loss, top1, top5]
-    return outs
+    return outs, [image, label]
 
 
-def train(main_prog, exe, epoch_id, train_reader, fetch_list, args):
+def train(main_prog, exe, epoch_id, train_reader, train_feeder, fetch_list,
+          args):
     loss = utility.AvgrageMeter()
     top1 = utility.AvgrageMeter()
     top5 = utility.AvgrageMeter()
-    for step_id, (image, label) in enumerate(train_reader()):
+    for step_id, data in enumerate(train_reader()):
         if args.profile:
             if epoch_id == 0 and step_id == 5:
                 profiler.start_profiler("All")
             elif epoch_id == 0 and step_id == 7:
                 profiler.stop_profiler("total", "/tmp/profile")
-        feed = {"image": image, "label": label}
+        feed = train_feeder.feed(data)
         loss_v, top1_v, top5_v, lr = exe.run(
             main_prog, feed=feed, fetch_list=[v.name for v in fetch_list])
         loss.update(loss_v, args.batch_size)
@@ -171,15 +172,16 @@ def train(main_prog, exe, epoch_id, train_reader, fetch_list, args):
                 "Train Epoch {}, Step {}, Lr {:.8f}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}".
                 format(epoch_id, step_id, lr[0], loss.avg[0], top1.avg[0],
                        top5.avg[0]))
-    return top1.avg[0]
+    return top1.avg[0], top5.avg[0]
 
 
-def valid(main_prog, exe, epoch_id, valid_reader, fetch_list, args):
+def valid(main_prog, exe, epoch_id, valid_reader, valid_feeder, fetch_list,
+          args):
     loss = utility.AvgrageMeter()
     top1 = utility.AvgrageMeter()
     top5 = utility.AvgrageMeter()
-    for step_id, (image, label) in enumerate(valid_reader()):
-        feed = {"image": image, "label": label}
+    for step_id, data in enumerate(valid_reader()):
+        feed = valid_feeder.feed(data)
         loss_v, top1_v, top5_v = exe.run(
             main_prog, feed=feed, fetch_list=[v.name for v in fetch_list])
         loss.update(loss_v, args.batch_size)
@@ -190,7 +192,7 @@ def valid(main_prog, exe, epoch_id, valid_reader, fetch_list, args):
                 "Valid Epoch {}, Step {}, loss {:.6f}, acc_1 {:.6f}, acc_5 {:.6f}".
                 format(epoch_id, step_id, loss.avg[0], top1.avg[0], top5.avg[
                     0]))
-    return top1.avg[0]
+    return top1.avg[0], top5.avg[0]
 
 
 def main(args):
@@ -199,15 +201,15 @@ def main(args):
 
     startup_prog = fluid.Program()
     train_prog = fluid.Program()
-    test_prog = fluid.Program()
+    valid_prog = fluid.Program()
 
-    train_fetch_list = build_program(
+    train_fetch_list, train_data = build_program(
         main_prog=train_prog,
         startup_prog=startup_prog,
         is_train=True,
         args=args)
-    valid_fetch_list = build_program(
-        main_prog=test_prog,
+    valid_fetch_list, valid_data = build_program(
+        main_prog=valid_prog,
         startup_prog=startup_prog,
         is_train=False,
         args=args)
@@ -215,7 +217,7 @@ def main(args):
     logger.info("param size = {:.6f}MB".format(
         utility.count_parameters_in_MB(train_prog.global_block()
                                        .all_parameters(), 'model')))
-    test_prog = test_prog.clone(for_test=True)
+    valid_prog = valid_prog.clone(for_test=True)
     place = fluid.CUDAPlace(0) if args.use_gpu else fluid.CPUPlace()
     exe = fluid.Executor(place)
     exe.run(startup_prog)
@@ -242,7 +244,12 @@ def main(args):
         loss_name=train_fetch_list[0].name,
         build_strategy=build_strategy,
         exec_strategy=exec_strategy)
-    test_prog = fluid.CompiledProgram(test_prog)
+    valid_prog = fluid.CompiledProgram(valid_prog)
+
+    train_feeder = fluid.DataFeeder(
+        place=place, feed_list=train_data, program=parallel_train_prog)
+    valid_feeder = fluid.DataFeeder(
+        place=place, feed_list=valid_data, program=valid_prog)
 
     def save_model(postfix, program):
         model_path = os.path.join(args.model_save_dir, postfix)
@@ -251,18 +258,21 @@ def main(args):
         logger.info('save models to %s' % (model_path))
         fluid.io.save_persistables(exe, model_path, main_program=program)
 
-    best_acc = 0
+    best_valid_top1 = 0
     for epoch_id in range(args.epochs):
-        train_top1 = train(parallel_train_prog, exe, epoch_id, train_reader,
-                           train_fetch_list, args)
-        logger.info("Epoch {}, train_acc {:.6f}".format(epoch_id, train_top1))
-        valid_top1 = valid(test_prog, exe, epoch_id, valid_reader,
-                           valid_fetch_list, args)
-        if valid_top1 > best_acc:
-            best_acc = valid_top1
+        train_top1, train_top5 = train(parallel_train_prog, exe, epoch_id,
+                                       train_reader, train_feeder,
+                                       train_fetch_list, args)
+        logger.info("Epoch {}, train_top1 {:.6f}, train_top5 {:.6f}".format(
+            epoch_id, train_top1, train_top5))
+        valid_top1, valid_top5 = valid(valid_prog, exe, epoch_id, valid_reader,
+                                       valid_feeder, valid_fetch_list, args)
+        if valid_top1 > best_valid_top1:
+            best_valid_top1 = valid_top1
             save_model('imagenet_model', train_prog)
-        logger.info("Epoch {}, valid_acc {:.6f}, best_valid_acc {:6f}".format(
-            epoch_id, valid_top1, best_acc))
+        logger.info(
+            "Epoch {}, valid_top1 {:.6f}, valid_top5 {:.6f}, best_valid_top1 {:6f}".
+            format(epoch_id, valid_top1, valid_top5, best_valid_top1))
 
 
 if __name__ == '__main__':

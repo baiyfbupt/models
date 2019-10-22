@@ -315,9 +315,10 @@ def main(args):
         valid_fetch_list = [loss, top1, top5]
         valid_top1 = valid(epoch_id, valid_reader, valid_fetch_list,
                            compiled_test_prog, exe)
-        logger.info("Epoch {}, valid_acc {:.6f}, best valid_acc {:6f}".format(
-            epoch_id, valid_top1, max(valid_top1, best_acc)))
-        save_model('search_' + str(epoch_id), train_prog)
+        if valid_top1 > best_acc:
+            best_acc = valid_top1
+        logger.info("Epoch {}, valid_acc {:.6f}, best_valid_acc {:6f}".format(
+            epoch_id, valid_top1, best_acc))
 
 
 if __name__ == '__main__':

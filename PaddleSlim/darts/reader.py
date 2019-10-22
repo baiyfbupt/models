@@ -324,4 +324,4 @@ def imagenet_reader(data_dir, mode):
         shuffle = False
         suffix = 'val_list.txt'
     file_list = os.path.join(data_dir, suffix)
-    return _reader_creator(file_list, mode, shuffle, data_dir)
+    return _reader_creator(file_list, mode, shuffle=shuffle, data_dir=data_dir)
