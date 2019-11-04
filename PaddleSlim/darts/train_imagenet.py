@@ -109,6 +109,11 @@ def build_program(main_prog, startup_prog, is_train, args):
             image = fluid.data(
                 name="image", shape=[None] + image_shape, dtype="float32")
             label = fluid.data(name="label", shape=[None, 1], dtype="int64")
+            data_loader = fluid.io.DataLoader.from_generator(
+                feed_list=[image, label],
+                capacity=64,
+                use_double_buffer=True,
+                iterable=True)
             genotype = eval("genotypes.%s" % args.arch)
             logits, logits_aux = network(
                 x=image,
@@ -147,23 +152,21 @@ def build_program(main_prog, startup_prog, is_train, args):
                 outs = [loss, top1, top5, learning_rate]
             else:
                 outs = [loss, top1, top5]
-    return outs, [image, label]
+    return outs, data_loader
 
 
-def train(main_prog, exe, epoch_id, train_reader, train_feeder, fetch_list,
-          args):
+def train(main_prog, exe, epoch_id, train_loader, fetch_list, args):
     loss = utility.AvgrageMeter()
     top1 = utility.AvgrageMeter()
     top5 = utility.AvgrageMeter()
-    for step_id, data in enumerate(train_reader()):
+    for step_id, data in enumerate(train_loader()):
         if args.profile:
             if epoch_id == 0 and step_id == 5:
                 profiler.start_profiler("All")
             elif epoch_id == 0 and step_id == 7:
                 profiler.stop_profiler("total", "/tmp/profile")
-        feed = train_feeder.feed(data)
         loss_v, top1_v, top5_v, lr = exe.run(
-            main_prog, feed=feed, fetch_list=[v.name for v in fetch_list])
+            main_prog, feed=data, fetch_list=[v.name for v in fetch_list])
         loss.update(loss_v, args.batch_size)
         top1.update(top1_v, args.batch_size)
         top5.update(top5_v, args.batch_size)
@@ -175,15 +178,13 @@ def train(main_prog, exe, epoch_id, train_reader, train_feeder, fetch_list,
     return top1.avg[0], top5.avg[0]
 
 
-def valid(main_prog, exe, epoch_id, valid_reader, valid_feeder, fetch_list,
-          args):
+def valid(main_prog, exe, epoch_id, valid_loader, fetch_list, args):
     loss = utility.AvgrageMeter()
     top1 = utility.AvgrageMeter()
     top5 = utility.AvgrageMeter()
-    for step_id, data in enumerate(valid_reader()):
-        feed = valid_feeder.feed(data)
+    for step_id, data in enumerate(valid_loader()):
         loss_v, top1_v, top5_v = exe.run(
-            main_prog, feed=feed, fetch_list=[v.name for v in fetch_list])
+            main_prog, feed=data, fetch_list=[v.name for v in fetch_list])
         loss.update(loss_v, args.batch_size)
         top1.update(top1_v, args.batch_size)
         top5.update(top5_v, args.batch_size)
@@ -203,12 +204,12 @@ def main(args):
     train_prog = fluid.Program()
     valid_prog = fluid.Program()
 
-    train_fetch_list, train_data = build_program(
+    train_fetch_list, train_loader = build_program(
         main_prog=train_prog,
         startup_prog=startup_prog,
         is_train=True,
         args=args)
-    valid_fetch_list, valid_data = build_program(
+    valid_fetch_list, valid_loader = build_program(
         main_prog=valid_prog,
         startup_prog=startup_prog,
         is_train=False,
@@ -229,6 +230,10 @@ def main(args):
         reader.imagenet_reader(args.data_dir, 'val'),
         batch_size=args.batch_size)
 
+    places = fluid.cuda_places() if args.use_gpu else fluid.cpu_places()
+    train_loader.set_sample_list_generator(train_reader, places)
+    valid_loader.set_sample_list_generator(valid_reader, places)
+
     exec_strategy = fluid.ExecutionStrategy()
     exec_strategy.num_threads = 4 * devices_num
     build_strategy = fluid.BuildStrategy()
@@ -246,11 +251,6 @@ def main(args):
         exec_strategy=exec_strategy)
     valid_prog = fluid.CompiledProgram(valid_prog)
 
-    train_feeder = fluid.DataFeeder(
-        place=place, feed_list=train_data, program=parallel_train_prog)
-    valid_feeder = fluid.DataFeeder(
-        place=place, feed_list=valid_data, program=valid_prog)
-
     def save_model(postfix, program):
         model_path = os.path.join(args.model_save_dir, postfix)
         if os.path.isdir(model_path):
@@ -261,12 +261,11 @@ def main(args):
     best_valid_top1 = 0
     for epoch_id in range(args.epochs):
         train_top1, train_top5 = train(parallel_train_prog, exe, epoch_id,
-                                       train_reader, train_feeder,
-                                       train_fetch_list, args)
+                                       train_loader, train_fetch_list, args)
         logger.info("Epoch {}, train_top1 {:.6f}, train_top5 {:.6f}".format(
             epoch_id, train_top1, train_top5))
-        valid_top1, valid_top5 = valid(valid_prog, exe, epoch_id, valid_reader,
-                                       valid_feeder, valid_fetch_list, args)
+        valid_top1, valid_top5 = valid(valid_prog, exe, epoch_id, valid_loader,
+                                       valid_fetch_list, args)
         if valid_top1 > best_valid_top1:
             best_valid_top1 = valid_top1
             save_model('imagenet_model', train_prog)

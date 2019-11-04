@@ -98,11 +98,18 @@ def build_program(main_prog, startup_prog, is_train, args):
             image = fluid.data(
                 name="image", shape=[None] + image_shape, dtype="float32")
             label = fluid.data(name="label", shape=[None, 1], dtype="int64")
+            data_loader = fluid.io.DataLoader.from_generator(
+                feed_list=[image, label],
+                capacity=64,
+                use_double_buffer=True,
+                iterable=True)
             drop_path_prob = ''
             drop_path_mask = ''
             if args.drop_path_prob > 0 and is_train:
                 drop_path_prob = fluid.data(
-                    name="drop_path_prob", shape=[1], dtype="float32")
+                    name="drop_path_prob",
+                    shape=[args.batch_size, 1],
+                    dtype="float32")
                 drop_path_mask = fluid.data(
                     name="drop_path_mask",
                     shape=[args.batch_size, args.layers, num_cells, 2],
@@ -146,15 +153,17 @@ def build_program(main_prog, startup_prog, is_train, args):
                 outs = [loss, top1, top5, learning_rate]
             else:
                 outs = [loss, top1, top5]
-    return outs
+    return outs, data_loader
 
 
-def train(main_prog, exe, epoch_id, train_reader, fetch_list, devices_num,
+def train(main_prog, exe, epoch_id, train_loader, fetch_list, devices_num,
           args):
     loss = utility.AvgrageMeter()
     top1 = utility.AvgrageMeter()
     top5 = utility.AvgrageMeter()
-    for step_id, (image, label) in enumerate(train_reader()):
+    for step_id, data in enumerate(train_loader()):
+        image = data[0]['image']
+        label = data[0]['label']
         if args.profile:
             if epoch_id == 0 and step_id == 5:
                 profiler.start_profiler("All")
@@ -162,12 +171,12 @@ def train(main_prog, exe, epoch_id, train_reader, fetch_list, devices_num,
                 profiler.stop_profiler("total", "/tmp/profile")
         if args.drop_path_prob > 0:
             num_cells = 4
-            drop_path_prob = np.array([
-                args.drop_path_prob * epoch_id / args.epochs
-            ] * devices_num).astype(np.float32)
+            drop_path_prob = np.array(
+                [[args.drop_path_prob * epoch_id / args.epochs]
+                 for i in range(args.batch_size)]).astype(np.float32)
             drop_path_mask = 1 - np.random.binomial(
                 1,
-                drop_path_prob,
+                drop_path_prob[0],
                 size=[args.batch_size, args.layers, num_cells, 2]).astype(
                     np.float32)
             feed = {
@@ -191,11 +200,13 @@ def train(main_prog, exe, epoch_id, train_reader, fetch_list, devices_num,
     return top1.avg[0]
 
 
-def valid(main_prog, exe, epoch_id, valid_reader, fetch_list, args):
+def valid(main_prog, exe, epoch_id, valid_loader, fetch_list, args):
     loss = utility.AvgrageMeter()
     top1 = utility.AvgrageMeter()
     top5 = utility.AvgrageMeter()
-    for step_id, (image, label) in enumerate(valid_reader()):
+    for step_id, data in enumerate(valid_loader()):
+        image = data[0]['image']
+        label = data[0]['label']
         feed = {"image": image, "label": label}
         loss_v, top1_v, top5_v = exe.run(
             main_prog, feed=feed, fetch_list=[v.name for v in fetch_list])
@@ -219,12 +230,12 @@ def main(args):
     train_prog = fluid.Program()
     test_prog = fluid.Program()
 
-    train_fetch_list = build_program(
+    train_fetch_list, train_loader = build_program(
         main_prog=train_prog,
         startup_prog=startup_prog,
         is_train=True,
         args=args)
-    valid_fetch_list = build_program(
+    valid_fetch_list, valid_loader = build_program(
         main_prog=test_prog,
         startup_prog=startup_prog,
         is_train=False,
@@ -245,14 +256,16 @@ def main(args):
     valid_reader = reader.train_valid(
         batch_size=args.batch_size, is_train=False, is_shuffle=False, args=args)
 
+    places = fluid.cuda_places() if args.use_gpu else fluid.cpu_places()
+    train_loader.set_batch_generator(train_reader, places=places)
+    valid_loader.set_batch_generator(valid_reader, places=places)
+
     exec_strategy = fluid.ExecutionStrategy()
     exec_strategy.num_threads = 4 * devices_num
     build_strategy = fluid.BuildStrategy()
     if args.with_mem_opt:
-        train_fetch_list[0].persistable = True
-        train_fetch_list[1].persistable = True
-        train_fetch_list[2].persistable = True
-        train_fetch_list[3].persistable = True
+        for i in range(len(train_fetch_list)):
+            train_fetch_list[i].persistable = True
         build_strategy.enable_inplace = True
         build_strategy.memory_optimize = True
 
@@ -271,10 +284,10 @@ def main(args):
 
     best_acc = 0
     for epoch_id in range(args.epochs):
-        train_top1 = train(parallel_train_prog, exe, epoch_id, train_reader,
+        train_top1 = train(parallel_train_prog, exe, epoch_id, train_loader,
                            train_fetch_list, devices_num, args)
         logger.info("Epoch {}, train_acc {:.6f}".format(epoch_id, train_top1))
-        valid_top1 = valid(test_prog, exe, epoch_id, valid_reader,
+        valid_top1 = valid(test_prog, exe, epoch_id, valid_loader,
                            valid_fetch_list, args)
         if valid_top1 > best_acc:
             best_acc = valid_top1

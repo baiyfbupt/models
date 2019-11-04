@@ -68,7 +68,7 @@ def classifier(x, num_classes, name):
 
 
 def drop_path(x, drop_prob, mask, args):
-    keep_prob = 1 - drop_prob
+    keep_prob = 1 - drop_prob[0]
     x = fluid.layers.elementwise_mul(x / keep_prob, mask, axis=0)
     return x
 
