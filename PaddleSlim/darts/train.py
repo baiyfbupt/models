@@ -156,8 +156,7 @@ def build_program(main_prog, startup_prog, is_train, args):
     return outs, data_loader
 
 
-def train(main_prog, exe, epoch_id, train_loader, fetch_list, devices_num,
-          args):
+def train(main_prog, exe, epoch_id, train_loader, fetch_list, args):
     loss = utility.AvgrageMeter()
     top1 = utility.AvgrageMeter()
     top5 = utility.AvgrageMeter()
@@ -285,7 +284,7 @@ def main(args):
     best_acc = 0
     for epoch_id in range(args.epochs):
         train_top1 = train(parallel_train_prog, exe, epoch_id, train_loader,
-                           train_fetch_list, devices_num, args)
+                           train_fetch_list, args)
         logger.info("Epoch {}, train_acc {:.6f}".format(epoch_id, train_top1))
         valid_top1 = valid(test_prog, exe, epoch_id, valid_loader,
                            valid_fetch_list, args)
