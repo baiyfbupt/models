@@ -136,11 +136,13 @@ def genotype(test_prog, exe, place):
     logger.info('genotype = %s', genotype)
 
 
-def valid(epoch_id, valid_reader, fetch_list, test_prog, exe):
+def valid(epoch_id, valid_loader, fetch_list, test_prog, exe):
     loss = utility.AvgrageMeter()
     top1 = utility.AvgrageMeter()
     top5 = utility.AvgrageMeter()
-    for step_id, (image_val, label_val) in enumerate(valid_reader()):
+    for step_id, valid_data in enumerate(valid_loader()):
+        image_val = valid_data[0]['image_val']
+        label_val = valid_data[0]['label_val']
         # use valid data to feed image_train and label_train
         feed = {
             "image_train": image_val,
@@ -162,14 +164,18 @@ def valid(epoch_id, valid_reader, fetch_list, test_prog, exe):
     return top1.avg[0]
 
 
-def train(epoch_id, train_reader, valid_reader, fetch_list, arch_progs_list,
+def train(epoch_id, train_loader, valid_loader, fetch_list, arch_progs_list,
           train_prog, exe):
     loss = utility.AvgrageMeter()
     top1 = utility.AvgrageMeter()
     top5 = utility.AvgrageMeter()
-    for step_id, ((image_train, label_train), (
-            image_val,
-            label_val)) in enumerate(zip(train_reader(), valid_reader())):
+    for step_id, (
+            train_data,
+            valid_data) in enumerate(zip(train_loader(), valid_loader())):
+        image_train = train_data[0]['image_train']
+        label_train = train_data[0]['label_train']
+        image_val = valid_data[0]['image_val']
+        label_val = valid_data[0]['label_val']
         if args.profile:
             if epoch_id == 0 and step_id == 1:
                 profiler.start_profiler("All")
@@ -219,6 +225,16 @@ def main(args):
                 name="image_val", shape=[None] + image_shape, dtype="float32")
             label_val = fluid.data(
                 name="label_val", shape=[None, 1], dtype="int64")
+            train_loader = fluid.io.DataLoader.from_generator(
+                feed_list=[image_train, label_train],
+                capacity=64,
+                use_double_buffer=True,
+                iterable=True)
+            valid_loader = fluid.io.DataLoader.from_generator(
+                feed_list=[image_val, label_val],
+                capacity=64,
+                use_double_buffer=True,
+                iterable=True)
             learning_rate = fluid.layers.cosine_decay(
                 args.learning_rate, 4 * step_per_epoch, args.epochs)
             # Pytorch CosineAnnealingLR
@@ -269,6 +285,9 @@ def main(args):
         train_portion=args.train_portion,
         is_shuffle=is_shuffle,
         args=args)
+    places = fluid.cuda_places() if args.use_gpu else fluid.cpu_places()
+    train_loader.set_batch_generator(train_reader, places=places)
+    valid_loader.set_batch_generator(valid_reader, places=places)
 
     exec_strategy = fluid.ExecutionStrategy()
     exec_strategy.num_threads = 4 * devices_num
@@ -308,12 +327,12 @@ def main(args):
         # get genotype
         genotype(test_prog, exe, place)
         train_fetch_list = [learning_rate, loss, top1, top5]
-        train_top1 = train(epoch_id, train_reader, valid_reader,
+        train_top1 = train(epoch_id, train_loader, valid_loader,
                            train_fetch_list, arch_progs_list,
                            parallel_train_prog, exe)
         logger.info("Epoch {}, train_acc {:.6f}".format(epoch_id, train_top1))
         valid_fetch_list = [loss, top1, top5]
-        valid_top1 = valid(epoch_id, valid_reader, valid_fetch_list,
+        valid_top1 = valid(epoch_id, valid_loader, valid_fetch_list,
                            compiled_test_prog, exe)
         if valid_top1 > best_acc:
             best_acc = valid_top1
