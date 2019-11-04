@@ -232,7 +232,7 @@ def main(args):
 
     places = fluid.cuda_places() if args.use_gpu else fluid.cpu_places()
     train_loader.set_sample_list_generator(train_reader, places)
-    valid_loader.set_sample_list_generator(valid_reader, places)
+    valid_loader.set_sample_list_generator(valid_reader, place)
 
     exec_strategy = fluid.ExecutionStrategy()
     exec_strategy.num_threads = 4 * devices_num

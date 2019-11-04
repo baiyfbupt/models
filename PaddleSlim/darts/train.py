@@ -161,31 +161,34 @@ def train(main_prog, exe, epoch_id, train_loader, fetch_list, args):
     top1 = utility.AvgrageMeter()
     top5 = utility.AvgrageMeter()
     for step_id, data in enumerate(train_loader()):
-        image = data[0]['image']
-        label = data[0]['label']
         if args.profile:
             if epoch_id == 0 and step_id == 5:
                 profiler.start_profiler("All")
             elif epoch_id == 0 and step_id == 7:
                 profiler.stop_profiler("total", "/tmp/profile")
+        devices_num = len(data)
         if args.drop_path_prob > 0:
-            num_cells = 4
-            drop_path_prob = np.array(
-                [[args.drop_path_prob * epoch_id / args.epochs]
-                 for i in range(args.batch_size)]).astype(np.float32)
-            drop_path_mask = 1 - np.random.binomial(
-                1,
-                drop_path_prob[0],
-                size=[args.batch_size, args.layers, num_cells, 2]).astype(
-                    np.float32)
-            feed = {
-                "image": image,
-                "label": label,
-                "drop_path_prob": drop_path_prob,
-                "drop_path_mask": drop_path_mask
-            }
+            feed = []
+            for device_id in range(devices_num):
+                image = data[device_id]['image']
+                label = data[device_id]['label']
+                num_cells = 4
+                drop_path_prob = np.array(
+                    [[args.drop_path_prob * epoch_id / args.epochs]
+                     for i in range(args.batch_size)]).astype(np.float32)
+                drop_path_mask = 1 - np.random.binomial(
+                    1,
+                    drop_path_prob[0],
+                    size=[args.batch_size, args.layers, num_cells, 2]).astype(
+                        np.float32)
+                feed.append({
+                    "image": image,
+                    "label": label,
+                    "drop_path_prob": drop_path_prob,
+                    "drop_path_mask": drop_path_mask
+                })
         else:
-            feed = {"image": image, "label": label}
+            feed = data
         loss_v, top1_v, top5_v, lr = exe.run(
             main_prog, feed=feed, fetch_list=[v.name for v in fetch_list])
         loss.update(loss_v, args.batch_size)
@@ -204,11 +207,8 @@ def valid(main_prog, exe, epoch_id, valid_loader, fetch_list, args):
     top1 = utility.AvgrageMeter()
     top5 = utility.AvgrageMeter()
     for step_id, data in enumerate(valid_loader()):
-        image = data[0]['image']
-        label = data[0]['label']
-        feed = {"image": image, "label": label}
         loss_v, top1_v, top5_v = exe.run(
-            main_prog, feed=feed, fetch_list=[v.name for v in fetch_list])
+            main_prog, feed=data, fetch_list=[v.name for v in fetch_list])
         loss.update(loss_v, args.batch_size)
         top1.update(top1_v, args.batch_size)
         top5.update(top5_v, args.batch_size)
@@ -257,7 +257,7 @@ def main(args):
 
     places = fluid.cuda_places() if args.use_gpu else fluid.cpu_places()
     train_loader.set_batch_generator(train_reader, places=places)
-    valid_loader.set_batch_generator(valid_reader, places=places)
+    valid_loader.set_batch_generator(valid_reader, places=place)
 
     exec_strategy = fluid.ExecutionStrategy()
     exec_strategy.num_threads = 4 * devices_num

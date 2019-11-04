@@ -141,15 +141,17 @@ def valid(epoch_id, valid_loader, fetch_list, test_prog, exe):
     top1 = utility.AvgrageMeter()
     top5 = utility.AvgrageMeter()
     for step_id, valid_data in enumerate(valid_loader()):
-        image_val = valid_data[0]['image_val']
-        label_val = valid_data[0]['label_val']
-        # use valid data to feed image_train and label_train
-        feed = {
-            "image_train": image_val,
-            "label_train": label_val,
-            "image_val": image_val,
-            "label_val": label_val
-        }
+        feed = []
+        for device_id in range(len(valid_data)):
+            image_val = valid_data[device_id]['image_val']
+            label_val = valid_data[device_id]['label_val']
+            # use valid data to feed image_train and label_train
+            feed.append({
+                "image_train": image_val,
+                "label_train": label_val,
+                "image_val": image_val,
+                "label_val": label_val
+            })
         loss_v, top1_v, top5_v = exe.run(test_prog,
                                          feed=feed,
                                          fetch_list=fetch_list)
@@ -172,21 +174,14 @@ def train(epoch_id, train_loader, valid_loader, fetch_list, arch_progs_list,
     for step_id, (
             train_data,
             valid_data) in enumerate(zip(train_loader(), valid_loader())):
-        image_train = train_data[0]['image_train']
-        label_train = train_data[0]['label_train']
-        image_val = valid_data[0]['image_val']
-        label_val = valid_data[0]['label_val']
         if args.profile:
             if epoch_id == 0 and step_id == 1:
                 profiler.start_profiler("All")
             elif epoch_id == 0 and step_id == 3:
                 profiler.stop_profiler("total", "/tmp/profile")
-        feed = {
-            "image_train": image_train,
-            "label_train": label_train,
-            "image_val": image_val,
-            "label_val": label_val
-        }
+        feed = []
+        for device_id in range(len(train_data)):
+            feed.append(dict(train_data[device_id], **valid_data[device_id]))
         exe.run(arch_progs_list[0], feed=feed)
         exe.run(arch_progs_list[1], feed=feed)
         lr, loss_v, top1_v, top5_v = exe.run(
@@ -313,7 +308,8 @@ def main(args):
         loss_name=loss.name,
         build_strategy=build_strategy,
         exec_strategy=exec_strategy)
-    compiled_test_prog = fluid.CompiledProgram(test_prog)
+    compiled_test_prog = fluid.CompiledProgram(test_prog).with_data_parallel(
+        build_strategy=build_strategy, exec_strategy=exec_strategy)
 
     def save_model(postfix, program):
         model_path = os.path.join(args.model_save_dir, postfix)
