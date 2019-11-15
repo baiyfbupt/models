@@ -80,43 +80,49 @@ def compress(args):
     # define teacher program
     teacher_program = fluid.Program()
     t_startup = fluid.Program()
-    teacher_scope = fluid.Scope()
-    #with fluid.scope_guard(teacher_scope):
-    #    with fluid.program_guard(teacher_program, t_startup):
-    #image = teacher_program.global_block()._clone_variable(image, force_persistable=False)
-    #        image = fluid.layers.data(name='xxx', shape=image_shape, dtype='float32')
-    #label = fluid.layers.data(name='label', shape=[1], dtype='int64')
-    #         predict = teacher_model.net(image,
-    #                                     class_dim=args.class_dim)
-    #print("="*50+"teacher_model_params"+"="*50)
-    #for v in teacher_program.list_vars():
-    #    print(v.name, v.shape)
-    #return
+    load_inference_model = True
+    if not load_inference_model:
+        teacher_scope = fluid.Scope()
+        with fluid.scope_guard(teacher_scope):
+            with fluid.program_guard(teacher_program, t_startup):
+                image = fluid.layers.data(
+                    name='xxx', shape=image_shape, dtype='float32')
+                predict = teacher_model.net(image, class_dim=args.class_dim)
+        #print("="*50+"teacher_model_params"+"="*50)
+        #for v in teacher_program.list_vars():
+        #    print(v.name, v.shape)
+        #return
 
-    #    exe.run(t_startup)
-    #    assert args.teacher_pretrained_model and os.path.exists(
-    #        args.teacher_pretrained_model
-    #    ), "teacher_pretrained_model should be set when teacher_model is not None."
+            exe.run(t_startup)
+            assert args.teacher_pretrained_model and os.path.exists(
+                args.teacher_pretrained_model
+            ), "teacher_pretrained_model should be set when teacher_model is not None."
 
-    #    def if_exist(var):
-    #        return os.path.exists(
-    #            os.path.join(args.teacher_pretrained_model, var.name))
+            def if_exist(var):
+                return os.path.exists(
+                    os.path.join(args.teacher_pretrained_model, var.name))
 
-    #    fluid.io.load_vars(
-    #        exe,
-    #        args.teacher_pretrained_model,
-    #        main_program=teacher_program,
-    #        predicate=if_exist)
-    #fluid.io.save_inference_model(dirname='./saved_for_inference', feeded_var_names=['xxx'], target_vars=[predict], executor=exe, main_program=teacher_program)
-    #return
+            fluid.io.load_vars(
+                exe,
+                args.teacher_pretrained_model,
+                main_program=teacher_program,
+                predicate=if_exist)
+            #fluid.io.save_inference_model(dirname='./saved_for_inference', feeded_var_names=['xxx'], target_vars=[predict], executor=exe, main_program=teacher_program)
+            #return
 
-    #    teacher_program = teacher_program.clone(for_test=True)
-    teacher_program, feed_target_names, fetch_targets = fluid.io.load_inference_model(
-        dirname='./saved_for_inference', executor=exe)
+            teacher_program = teacher_program.clone(for_test=True)
+    else:
+        teacher_scope = fluid.global_scope()
+        teacher_program, feed_target_names, fetch_targets = fluid.io.load_inference_model(
+            dirname='./saved_for_inference', executor=exe)
 
     data_name_map = {'xxx': 'image'}
-    main = merge(teacher_program, student_program, data_name_map,
-                 place)  #, teacher_scope=teacher_scope)
+    main = merge(
+        teacher_program,
+        student_program,
+        data_name_map,
+        place,
+        teacher_scope=teacher_scope)
     #print("="*50+"teacher_vars"+"="*50)
     #for v in teacher_program.list_vars():
     #    if '_generated_var' not in v.name and 'fetch' not in v.name and 'feed' not in v.name:
