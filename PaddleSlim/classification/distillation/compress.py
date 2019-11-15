@@ -14,8 +14,7 @@ import imagenet_reader as reader
 import models
 sys.path.append("../../")
 from utility import add_arguments, print_arguments
-
-from paddle.fluid.contrib.slim import Compressor
+from single_distiller import merge, l2_loss
 
 logging.basicConfig(format='%(asctime)s-%(levelname)s: %(message)s')
 _logger = logging.getLogger(__name__)
@@ -44,110 +43,103 @@ def compress(args):
 
     assert args.model in model_list, "{} is not in lists: {}".format(args.model,
                                                                      model_list)
-    image = fluid.layers.data(name='image', shape=image_shape, dtype='float32')
-    label = fluid.layers.data(name='label', shape=[1], dtype='int64')
-    # model definition
-    model = models.__dict__[args.model]()
+    student_program = fluid.Program()
+    s_startup = fluid.Program()
 
-    if args.model == 'ResNet34':
-        model.prefix_name = 'res34'
-        out = model.net(input=image, class_dim=args.class_dim, fc_name='fc_0')
-    else:
-        out = model.net(input=image, class_dim=args.class_dim)
-    cost = fluid.layers.cross_entropy(input=out, label=label)
-    avg_cost = fluid.layers.mean(x=cost)
-    acc_top1 = fluid.layers.accuracy(input=out, label=label, k=1)
-    acc_top5 = fluid.layers.accuracy(input=out, label=label, k=5)
+    with fluid.program_guard(student_program, s_startup):
+        image = fluid.layers.data(
+            name='image', shape=image_shape, dtype='float32')
+        label = fluid.layers.data(name='label', shape=[1], dtype='int64')
+        # model definition
+        model = models.__dict__[args.model]()
+
+        if args.model == 'ResNet34':
+            model.prefix_name = 'res34'
+            out = model.net(input=image,
+                            class_dim=args.class_dim,
+                            fc_name='fc_0')
+        else:
+            out = model.net(input=image, class_dim=args.class_dim)
+        cost = fluid.layers.cross_entropy(input=out, label=label)
+        avg_cost = fluid.layers.mean(x=cost)
+        acc_top1 = fluid.layers.accuracy(input=out, label=label, k=1)
+        acc_top5 = fluid.layers.accuracy(input=out, label=label, k=5)
     #print("="*50+"student_model_params"+"="*50)
     #for v in fluid.default_main_program().list_vars():
     #    print(v.name, v.shape)
 
-    val_program = fluid.default_main_program().clone()
-    boundaries = [
-        args.total_images / args.batch_size * 30, args.total_images /
-        args.batch_size * 60, args.total_images / args.batch_size * 90
-    ]
-    values = [0.1, 0.01, 0.001, 0.0001]
-    opt = fluid.optimizer.Momentum(
-        momentum=0.9,
-        learning_rate=fluid.layers.piecewise_decay(
-            boundaries=boundaries, values=values),
-        regularization=fluid.regularizer.L2Decay(4e-5))
-
     place = fluid.CUDAPlace(0) if args.use_gpu else fluid.CPUPlace()
     exe = fluid.Executor(place)
-    exe.run(fluid.default_startup_program())
-
-    if args.pretrained_model:
-
-        def if_exist(var):
-            return os.path.exists(os.path.join(args.pretrained_model, var.name))
-
-        fluid.io.load_vars(exe, args.pretrained_model, predicate=if_exist)
-
-    val_reader = paddle.batch(reader.val(), batch_size=args.batch_size)
-    val_feed_list = [('image', image.name), ('label', label.name)]
-    val_fetch_list = [('acc_top1', acc_top1.name), ('acc_top5', acc_top5.name)]
 
     train_reader = paddle.batch(
         reader.train(), batch_size=args.batch_size, drop_last=True)
     train_feed_list = [('image', image.name), ('label', label.name)]
     train_fetch_list = [('loss', avg_cost.name)]
 
-    teacher_programs = []
-    distiller_optimizer = None
-
-    teacher_model = models.__dict__[args.teacher_model](prefix_name='res50')
+    teacher_model = models.__dict__[args.teacher_model]()
     # define teacher program
     teacher_program = fluid.Program()
-    startup_program = fluid.Program()
-    with fluid.program_guard(teacher_program, startup_program):
-        img = teacher_program.global_block()._clone_variable(
-            image, force_persistable=False)
-        predict = teacher_model.net(img,
-                                    class_dim=args.class_dim,
-                                    fc_name='fc_0')
+    t_startup = fluid.Program()
+    teacher_scope = fluid.Scope()
+    #with fluid.scope_guard(teacher_scope):
+    #    with fluid.program_guard(teacher_program, t_startup):
+    #image = teacher_program.global_block()._clone_variable(image, force_persistable=False)
+    #        image = fluid.layers.data(name='xxx', shape=image_shape, dtype='float32')
+    #label = fluid.layers.data(name='label', shape=[1], dtype='int64')
+    #         predict = teacher_model.net(image,
+    #                                     class_dim=args.class_dim)
     #print("="*50+"teacher_model_params"+"="*50)
     #for v in teacher_program.list_vars():
     #    print(v.name, v.shape)
     #return
 
-    exe.run(startup_program)
-    assert args.teacher_pretrained_model and os.path.exists(
-        args.teacher_pretrained_model
-    ), "teacher_pretrained_model should be set when teacher_model is not None."
+    #    exe.run(t_startup)
+    #    assert args.teacher_pretrained_model and os.path.exists(
+    #        args.teacher_pretrained_model
+    #    ), "teacher_pretrained_model should be set when teacher_model is not None."
 
-    def if_exist(var):
-        return os.path.exists(
-            os.path.join(args.teacher_pretrained_model, var.name))
+    #    def if_exist(var):
+    #        return os.path.exists(
+    #            os.path.join(args.teacher_pretrained_model, var.name))
 
-    fluid.io.load_vars(
-        exe,
-        args.teacher_pretrained_model,
-        main_program=teacher_program,
-        predicate=if_exist)
+    #    fluid.io.load_vars(
+    #        exe,
+    #        args.teacher_pretrained_model,
+    #        main_program=teacher_program,
+    #        predicate=if_exist)
+    #fluid.io.save_inference_model(dirname='./saved_for_inference', feeded_var_names=['xxx'], target_vars=[predict], executor=exe, main_program=teacher_program)
+    #return
 
-    distiller_optimizer = opt
-    teacher_programs.append(teacher_program.clone(for_test=True))
+    #    teacher_program = teacher_program.clone(for_test=True)
+    teacher_program, feed_target_names, fetch_targets = fluid.io.load_inference_model(
+        dirname='./saved_for_inference', executor=exe)
 
-    com_pass = Compressor(
-        place,
-        fluid.global_scope(),
-        fluid.default_main_program(),
-        train_reader=train_reader,
-        train_feed_list=train_feed_list,
-        train_fetch_list=train_fetch_list,
-        eval_program=val_program,
-        eval_reader=val_reader,
-        eval_feed_list=val_feed_list,
-        eval_fetch_list=val_fetch_list,
-        teacher_programs=teacher_programs,
-        save_eval_model=True,
-        prune_infer_model=[[image.name], [out.name]],
-        train_optimizer=opt,
-        distiller_optimizer=distiller_optimizer)
-    com_pass.config(args.compress_config)
-    com_pass.run()
+    data_name_map = {'xxx': 'image'}
+    main = merge(teacher_program, student_program, data_name_map,
+                 place)  #, teacher_scope=teacher_scope)
+    #print("="*50+"teacher_vars"+"="*50)
+    #for v in teacher_program.list_vars():
+    #    if '_generated_var' not in v.name and 'fetch' not in v.name and 'feed' not in v.name:
+    #        print(v.name, v.shape)
+    #return
+    with fluid.program_guard(student_program, s_startup):
+        dist_loss = l2_loss("teacher_fc_1.tmp_0", "fc_0.tmp_0", main)
+        loss = avg_cost + dist_loss
+        opt = fluid.optimizer.Adam(
+            regularization=fluid.regularizer.L2Decay(4e-5))
+        opt.minimize(loss)
+    exe.run(s_startup)
+
+    feeder = fluid.DataFeeder(
+        feed_list=['image', 'label'], place=place, program=main)
+
+    for step_id, data in enumerate(train_reader()):
+        data = feeder.feed(data)
+        loss_1, loss_2 = exe.run(main,
+                                 feed=data,
+                                 fetch_list=[avg_cost.name, dist_loss.name])
+        _logger.info("step {} class loss {:.6f} dist loss {:.6f}".format(
+            step_id, loss_1[0], loss_2[0]))
 
 
 def main():
