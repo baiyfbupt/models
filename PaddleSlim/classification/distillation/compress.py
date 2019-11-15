@@ -50,14 +50,17 @@ def compress(args):
         image = fluid.layers.data(
             name='image', shape=image_shape, dtype='float32')
         label = fluid.layers.data(name='label', shape=[1], dtype='int64')
+        data_loader = fluid.io.DataLoader.from_generator(
+            feed_list=[image, label],
+            capacity=64,
+            use_double_buffer=True,
+            iterable=False)
         # model definition
         model = models.__dict__[args.model]()
 
         if args.model == 'ResNet34':
             model.prefix_name = 'res34'
-            out = model.net(input=image,
-                            class_dim=args.class_dim,
-                            fc_name='fc_0')
+            out = model.net(input=image, class_dim=args.class_dim)
         else:
             out = model.net(input=image, class_dim=args.class_dim)
         cost = fluid.layers.cross_entropy(input=out, label=label)
@@ -75,6 +78,9 @@ def compress(args):
         reader.train(), batch_size=args.batch_size, drop_last=True)
     train_feed_list = [('image', image.name), ('label', label.name)]
     train_fetch_list = [('loss', avg_cost.name)]
+
+    places = fluid.cuda_places()
+    data_loader.set_sample_list_generator(train_reader, places)
 
     teacher_model = models.__dict__[args.teacher_model]()
     # define teacher program
@@ -136,16 +142,26 @@ def compress(args):
         opt.minimize(loss)
     exe.run(s_startup)
 
-    feeder = fluid.DataFeeder(
-        feed_list=['image', 'label'], place=place, program=main)
+    #feeder = fluid.DataFeeder(
+    #    feed_list=['image', 'label'], place=place, program=main)
+    iterable_reader = False
+    if iterable_reader:
+        for step_id, data in enumerate(data_loader):
+            #data = feeder.feed(data)
 
-    for step_id, data in enumerate(train_reader()):
-        data = feeder.feed(data)
-        loss_1, loss_2 = exe.run(main,
-                                 feed=data,
-                                 fetch_list=[avg_cost.name, dist_loss.name])
-        _logger.info("step {} class loss {:.6f} dist loss {:.6f}".format(
-            step_id, loss_1[0], loss_2[0]))
+            loss_1, loss_2 = exe.run(
+                main, feed=data, fetch_list=[avg_cost.name, dist_loss.name])
+            _logger.info("step {} class loss {:.6f} dist loss {:.6f}".format(
+                step_id, loss_1[0], loss_2[0]))
+    else:
+        step_id = 0
+        data_loader.start()
+        while True:
+            loss_1, loss_2 = exe.run(
+                main, fetch_list=[avg_cost.name, dist_loss.name])
+            _logger.info("step {} class loss {:.6f} dist loss {:.6f}".format(
+                step_id, loss_1[0], loss_2[0]))
+            step_id += 1
 
 
 def main():
