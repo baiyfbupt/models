@@ -142,11 +142,9 @@ def compress(args):
     #        print(v.name, v.shape)
     #return
 
-    def self_defined_l2_loss(d):
-        t_var = d['t_var']
-        s_var = d['s_var']
-        l2 = fluid.layers.reduce_mean(fluid.layers.square(t_var - s_var)) * 10
-        return l2
+    def l1_loss(t_var, s_var):
+        l1 = fluid.layers.reduce_mean(fluid.layers.abs(t_var - s_var))
+        return l1
 
     with fluid.program_guard(main, s_startup):
         l2_loss_v = l2_loss("teacher_fc_1.tmp_0", "fc_0.tmp_0", main)
@@ -160,12 +158,9 @@ def compress(args):
                               "teacher_res3a_branch2a.conv2d.output.1.tmp_0",
                               "depthwise_conv2d_1.tmp_0", "conv2d_3.tmp_0",
                               main)
-        self_defined_loss_v = self_defined_loss(
-            main,
-            self_defined_l2_loss,
-            t_var="teacher_fc_1.tmp_1",
-            s_var="fc_0.tmp_1")
-        loss = avg_cost + l2_loss_v + soft_label_loss_v + fsp_loss_v + self_defined_loss_v
+        l1_loss_v = self_defined_loss(
+            main, l1_loss, t_var="teacher_fc_1.tmp_1", s_var="fc_0.tmp_1")
+        loss = avg_cost + l2_loss_v + soft_label_loss_v + fsp_loss_v + l1_loss_v
         opt = fluid.optimizer.Adam(
             regularization=fluid.regularizer.L2Decay(4e-5))
         opt.minimize(loss)
@@ -179,11 +174,10 @@ def compress(args):
                     feed=data,
                     fetch_list=[
                         loss.name, avg_cost.name, l2_loss_v.name,
-                        soft_label_loss_v.name, fsp_loss_v.name,
-                        self_defined_loss_v.name
+                        soft_label_loss_v.name, fsp_loss_v.name, l1_loss_v.name
                     ])
                 _logger.info(
-                    "epoch {} step {} loss {:.6f}, class loss {:.6f}, l2 loss {:.6f}, soft_label loss {:.6f}, fsp loss {:.6f}, self_defined loss {:.6f}".
+                    "epoch {} step {} loss {:.6f}, class loss {:.6f}, l2 loss {:.6f}, soft_label loss {:.6f}, fsp loss {:.6f}, l1 loss {:.6f}".
                     format(epoch_id, step_id, loss_1[0], loss_2[0], loss_3[0],
                            loss_4[0], loss_5[0], loss_6[0]))
         else:
@@ -196,10 +190,10 @@ def compress(args):
                         fetch_list=[
                             loss.name, avg_cost.name, l2_loss_v.name,
                             soft_label_loss_v.name, fsp_loss_v.name,
-                            self_defined_loss_v.name
+                            l1_loss_v.name
                         ])
                     _logger.info(
-                        "epoch {} step {} loss {:.6f}, class loss {:.6f}, l2 loss {:.6f}, soft_label loss {:.6f}, fsp loss {:.6f}, self_defined loss {:.6f}".
+                        "epoch {} step {} loss {:.6f}, class loss {:.6f}, l2 loss {:.6f}, soft_label loss {:.6f}, fsp loss {:.6f}, l1 loss {:.6f}".
                         format(epoch_id, step_id, loss_1[0], loss_2[0], loss_3[
                             0], loss_4[0], loss_5[0], loss_6[0]))
                     step_id += 1

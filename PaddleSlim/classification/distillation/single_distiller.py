@@ -125,5 +125,5 @@ def self_defined_loss(program, loss_func, **kwargs):
                                        program.global_block().var(item[1]))
         else:
             func_parameters.setdefault(item[0], func_parameters)
-    loss = loss_func(func_parameters)
+    loss = loss_func(**func_parameters)
     return loss
