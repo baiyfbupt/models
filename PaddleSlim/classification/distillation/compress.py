@@ -60,12 +60,7 @@ def compress(args):
             iterable=ITERABLE_READER)
         # model definition
         model = models.__dict__[args.model]()
-
-        if args.model == 'ResNet34':
-            model.prefix_name = 'res34'
-            out = model.net(input=image, class_dim=args.class_dim)
-        else:
-            out = model.net(input=image, class_dim=args.class_dim)
+        out = model.net(input=image, class_dim=args.class_dim)
         cost = fluid.layers.cross_entropy(input=out, label=label)
         avg_cost = fluid.layers.mean(x=cost)
         acc_top1 = fluid.layers.accuracy(input=out, label=label, k=1)
