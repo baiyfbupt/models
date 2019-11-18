@@ -101,7 +101,7 @@ def fsp_loss(teacher_var1_name, teacher_var2_name, student_var1_name,
             second dimension, all other dimensions should
             be consistent with student_var1.
         program(Program): The input distiller program. 
-    Return(Program): fsp distiller loss.
+    Return(Variable): fsp distiller loss.
     """
     teacher_var1 = program.global_block().var(teacher_var1_name)
     teacher_var2 = program.global_block().var(teacher_var2_name)
@@ -121,7 +121,7 @@ def l2_loss(teacher_var_name, student_var_name, program):
         teacher_var_name(str): The name of teacher_var.
         student_var_name(str): The name of student_var.
         program(Program): The input distiller program. 
-    Return(Program): l2 distiller loss.
+    Return(Variable): l2 distiller loss.
     """
     student_var = program.global_block().var(student_var_name)
     teacher_var = program.global_block().var(teacher_var_name)
@@ -146,7 +146,7 @@ def soft_label_loss(teacher_var_name,
         student_temperature(float): Temperature used to divide 
             student_feature_map before softmax. default: 1.0
 
-    Return(Program): l2 distiller loss.
+    Return(Variable): l2 distiller loss.
     """
     student_var = program.global_block().var(student_var_name)
     teacher_var = program.global_block().var(teacher_var_name)
@@ -166,7 +166,7 @@ def self_defined_loss(program, loss_func, **kwargs):
         program(Program): The input distiller program. 
         loss_func(function): The user self defined loss function. 
 
-    Return(Program): self defined distiller loss.
+    Return(Variable): self defined distiller loss.
     """
     func_parameters = {}
     for item in kwargs.items():
