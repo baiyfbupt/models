@@ -10,7 +10,6 @@
 #   Describe  :       
 #
 # ================================================================
-import random
 import numpy as np
 import paddle.fluid as fluid
 
@@ -89,7 +88,7 @@ def fsp_loss(teacher_var1_name, teacher_var2_name, student_var1_name,
     student_var2 = program.global_block().var(student_var2_name)
     teacher_fsp_matrix = fluid.layers.fsp_matrix(teacher_var1, teacher_var2)
     student_fsp_matrix = fluid.layers.fsp_matrix(student_var1, student_var2)
-    fsp_loss = fluid.layers.mean(
+    fsp_loss = fluid.layers.reduce_mean(
         fluid.layers.square(student_fsp_matrix - teacher_fsp_matrix))
     return fsp_loss
 
@@ -97,5 +96,34 @@ def fsp_loss(teacher_var1_name, teacher_var2_name, student_var1_name,
 def l2_loss(teacher_var_name, student_var_name, program):
     student_var = program.global_block().var(student_var_name)
     teacher_var = program.global_block().var(teacher_var_name)
-    l2loss = fluid.layers.mean(fluid.layers.square(student_var - teacher_var))
-    return l2loss
+    l2_loss = fluid.layers.reduce_mean(
+        fluid.layers.square(student_var - teacher_var))
+    return l2_loss
+
+
+def soft_label_loss(teacher_var_name,
+                    student_var_name,
+                    program,
+                    teacher_temperature=1.,
+                    student_temperature=1.):
+    student_var = program.global_block().var(student_var_name)
+    teacher_var = program.global_block().var(teacher_var_name)
+    student_var = fluid.layers.softmax(student_var / student_temperature)
+    teacher_var = fluid.layers.softmax(teacher_var / teacher_temperature)
+    teacher_var.stop_gradient = True
+    soft_label_loss = fluid.layers.reduce_mean(
+        fluid.layers.cross_entropy(
+            student_var, teacher_var, soft_label=True))
+    return soft_label_loss
+
+
+def self_defined_loss(program, loss_func, **kwargs):
+    func_parameters = {}
+    for item in kwargs.items():
+        if isinstance(item[1], str):
+            func_parameters.setdefault(item[0],
+                                       program.global_block().var(item[1]))
+        else:
+            func_parameters.setdefault(item[0], func_parameters)
+    loss = loss_func(func_parameters)
+    return loss

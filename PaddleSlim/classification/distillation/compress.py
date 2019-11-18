@@ -14,7 +14,7 @@ import imagenet_reader as reader
 import models
 sys.path.append("../../")
 from utility import add_arguments, print_arguments
-from single_distiller import merge, l2_loss
+from single_distiller import merge, l2_loss, soft_label_loss, fsp_loss, self_defined_loss
 
 logging.basicConfig(format='%(asctime)s-%(levelname)s: %(message)s')
 _logger = logging.getLogger(__name__)
@@ -32,8 +32,11 @@ add_arg('model',            str,  "MobileNet",          "Set the network to use.
 add_arg('pretrained_model', str,  None,                "Whether to use pretrained model.")
 add_arg('teacher_model',    str,  None,          "Set the teacher network to use.")
 add_arg('teacher_pretrained_model', str,  None,                "Whether to use pretrained model.")
-add_arg('compress_config',  str,  None,                 "The config file for compression with yaml format.")
 # yapf: enable
+
+# flags for exp
+ITERABLE_READER = False
+INFERENCE_MODEL = False
 
 model_list = [m for m in dir(models) if "__" not in m]
 
@@ -54,7 +57,7 @@ def compress(args):
             feed_list=[image, label],
             capacity=64,
             use_double_buffer=True,
-            iterable=False)
+            iterable=ITERABLE_READER)
         # model definition
         model = models.__dict__[args.model]()
 
@@ -68,7 +71,7 @@ def compress(args):
         acc_top1 = fluid.layers.accuracy(input=out, label=label, k=1)
         acc_top5 = fluid.layers.accuracy(input=out, label=label, k=5)
     #print("="*50+"student_model_params"+"="*50)
-    #for v in fluid.default_main_program().list_vars():
+    #for v in student_program.list_vars():
     #    print(v.name, v.shape)
 
     place = fluid.CUDAPlace(0) if args.use_gpu else fluid.CPUPlace()
@@ -76,8 +79,6 @@ def compress(args):
 
     train_reader = paddle.batch(
         reader.train(), batch_size=args.batch_size, drop_last=True)
-    train_feed_list = [('image', image.name), ('label', label.name)]
-    train_fetch_list = [('loss', avg_cost.name)]
 
     places = fluid.cuda_places()
     data_loader.set_sample_list_generator(train_reader, places)
@@ -86,18 +87,18 @@ def compress(args):
     # define teacher program
     teacher_program = fluid.Program()
     t_startup = fluid.Program()
-    load_inference_model = True
-    if not load_inference_model:
+    if not INFERENCE_MODEL:
         teacher_scope = fluid.Scope()
         with fluid.scope_guard(teacher_scope):
             with fluid.program_guard(teacher_program, t_startup):
                 image = fluid.layers.data(
                     name='xxx', shape=image_shape, dtype='float32')
                 predict = teacher_model.net(image, class_dim=args.class_dim)
-        #print("="*50+"teacher_model_params"+"="*50)
-        #for v in teacher_program.list_vars():
-        #    print(v.name, v.shape)
-        #return
+
+            #print("="*50+"teacher_model_params"+"="*50)
+            #for v in teacher_program.list_vars():
+            #    print(v.name, v.shape)
+            #return
 
             exe.run(t_startup)
             assert args.teacher_pretrained_model and os.path.exists(
@@ -113,7 +114,12 @@ def compress(args):
                 args.teacher_pretrained_model,
                 main_program=teacher_program,
                 predicate=if_exist)
-            #fluid.io.save_inference_model(dirname='./saved_for_inference', feeded_var_names=['xxx'], target_vars=[predict], executor=exe, main_program=teacher_program)
+            #fluid.io.save_inference_model(
+            #    dirname='./saved_for_inference',
+            #    feeded_var_names=['xxx'],
+            #    target_vars=[predict],
+            #    executor=exe,
+            #    main_program=teacher_program)
             #return
 
             teacher_program = teacher_program.clone(for_test=True)
@@ -129,39 +135,76 @@ def compress(args):
         data_name_map,
         place,
         teacher_scope=teacher_scope)
+
     #print("="*50+"teacher_vars"+"="*50)
     #for v in teacher_program.list_vars():
     #    if '_generated_var' not in v.name and 'fetch' not in v.name and 'feed' not in v.name:
     #        print(v.name, v.shape)
     #return
-    with fluid.program_guard(student_program, s_startup):
-        dist_loss = l2_loss("teacher_fc_1.tmp_0", "fc_0.tmp_0", main)
-        loss = avg_cost + dist_loss
+
+    def self_defined_l2_loss(d):
+        t_var = d['t_var']
+        s_var = d['s_var']
+        l2 = fluid.layers.reduce_mean(fluid.layers.square(t_var - s_var)) * 10
+        return l2
+
+    with fluid.program_guard(main, s_startup):
+        l2_loss_v = l2_loss("teacher_fc_1.tmp_0", "fc_0.tmp_0", main)
+        soft_label_loss_v = soft_label_loss(
+            "teacher_fc_1.tmp_0",
+            "fc_0.tmp_0",
+            main,
+            teacher_temperature=2.,
+            student_temperature=2.)
+        fsp_loss_v = fsp_loss("teacher_res2a_branch2a.conv2d.output.1.tmp_0",
+                              "teacher_res3a_branch2a.conv2d.output.1.tmp_0",
+                              "depthwise_conv2d_1.tmp_0", "conv2d_3.tmp_0",
+                              main)
+        self_defined_loss_v = self_defined_loss(
+            main,
+            self_defined_l2_loss,
+            t_var="teacher_fc_1.tmp_1",
+            s_var="fc_0.tmp_1")
+        loss = avg_cost + l2_loss_v + soft_label_loss_v + fsp_loss_v + self_defined_loss_v
         opt = fluid.optimizer.Adam(
             regularization=fluid.regularizer.L2Decay(4e-5))
         opt.minimize(loss)
     exe.run(s_startup)
 
-    #feeder = fluid.DataFeeder(
-    #    feed_list=['image', 'label'], place=place, program=main)
-    iterable_reader = False
-    if iterable_reader:
-        for step_id, data in enumerate(data_loader):
-            #data = feeder.feed(data)
-
-            loss_1, loss_2 = exe.run(
-                main, feed=data, fetch_list=[avg_cost.name, dist_loss.name])
-            _logger.info("step {} class loss {:.6f} dist loss {:.6f}".format(
-                step_id, loss_1[0], loss_2[0]))
-    else:
-        step_id = 0
-        data_loader.start()
-        while True:
-            loss_1, loss_2 = exe.run(
-                main, fetch_list=[avg_cost.name, dist_loss.name])
-            _logger.info("step {} class loss {:.6f} dist loss {:.6f}".format(
-                step_id, loss_1[0], loss_2[0]))
-            step_id += 1
+    for epoch_id in range(1000):
+        if ITERABLE_READER:
+            for step_id, data in enumerate(data_loader):
+                loss_1, loss_2, loss_3, loss_4, loss_5, loss_6 = exe.run(
+                    main,
+                    feed=data,
+                    fetch_list=[
+                        loss.name, avg_cost.name, l2_loss_v.name,
+                        soft_label_loss_v.name, fsp_loss_v.name,
+                        self_defined_loss_v.name
+                    ])
+                _logger.info(
+                    "epoch {} step {} loss {:.6f}, class loss {:.6f}, l2 loss {:.6f}, soft_label loss {:.6f}, fsp loss {:.6f}, self_defined loss {:.6f}".
+                    format(epoch_id, step_id, loss_1[0], loss_2[0], loss_3[0],
+                           loss_4[0], loss_5[0], loss_6[0]))
+        else:
+            step_id = 0
+            data_loader.start()
+            try:
+                while True:
+                    loss_1, loss_2, loss_3, loss_4, loss_5, loss_6 = exe.run(
+                        main,
+                        fetch_list=[
+                            loss.name, avg_cost.name, l2_loss_v.name,
+                            soft_label_loss_v.name, fsp_loss_v.name,
+                            self_defined_loss_v.name
+                        ])
+                    _logger.info(
+                        "epoch {} step {} loss {:.6f}, class loss {:.6f}, l2 loss {:.6f}, soft_label loss {:.6f}, fsp loss {:.6f}, self_defined loss {:.6f}".
+                        format(epoch_id, step_id, loss_1[0], loss_2[0], loss_3[
+                            0], loss_4[0], loss_5[0], loss_6[0]))
+                    step_id += 1
+            except:
+                data_loader.reset()
 
 
 def main():

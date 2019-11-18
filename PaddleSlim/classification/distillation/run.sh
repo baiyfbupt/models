@@ -26,20 +26,9 @@ export FLAGS_eager_delete_tensor_gb=0.0
 #-----------------
 export CUDA_VISIBLE_DEVICES=2
 
-# for mobilenet_v1 distillation
-#cd ${pretrain_dir}/ResNet50_pretrained
-#for files in $(ls res50_*)
-#    do mv $files ${files#*_}
-#done
-#for files in $(ls *)
-#    do mv $files "res50_"$files
-#done
-#cd -
-
 python -u compress.py \
 --model "MobileNet" \
 --teacher_model "ResNet50" \
 --teacher_pretrained_model ../pretrain/ResNet50_pretrained \
---compress_config ./configs/mobilenetv1_resnet50_distillation.yaml \
 #> mobilenet_v1.log 2>&1 &
 #tailf mobilenet_v1.log
