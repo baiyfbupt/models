@@ -97,3 +97,4 @@ DARTS_V2 = Genotype(
     reduce_concat=[2, 3, 4, 5])
 
 DARTS = DARTS_V2
+DARTS_V3 = Genotype(normal=[('dil_conv_3x3', 0), ('sep_conv_3x3', 1), ('sep_conv_3x3', 0), ('sep_conv_3x3', 1), ('sep_conv_3x3', 1), ('sep_conv_3x3', 0), ('skip_connect', 0), ('sep_conv_3x3', 1)], normal_concat=[2, 3, 4, 5], reduce=[('skip_connect', 1), ('max_pool_3x3', 0), ('max_pool_3x3', 1), ('skip_connect', 2), ('skip_connect', 2), ('dil_conv_5x5', 3), ('skip_connect', 2), ('max_pool_3x3', 1)], reduce_concat=[2, 3, 4, 5])
