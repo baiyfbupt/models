@@ -44,20 +44,20 @@ def mixed_op(x, c_out, stride, index, reduction, name):
         op = OPS[primitive](x, c_out, stride, False, name)
         if 'pool' in primitive:
             gama = ParamAttr(
-                name=name + '/' + primitive + "/mixed_bn_gama",
+                name=name + '_' + primitive + "_mixed_bn_gama",
                 initializer=fluid.initializer.Constant(value=1),
                 trainable=False)
             beta = ParamAttr(
-                name=name + '/' + primitive + "/mixed_bn_beta",
+                name=name + '_' + primitive + "_mixed_bn_beta",
                 initializer=fluid.initializer.Constant(value=0),
                 trainable=False)
             op = fluid.layers.batch_norm(
                 op,
                 param_attr=gama,
                 bias_attr=beta,
-                moving_mean_name=name + '/' + primitive + "/mixed_bn_mean",
-                moving_variance_name=name + '/' + primitive +
-                "/mixed_bn_variance")
+                moving_mean_name=name + '_' + primitive + "_mixed_bn_mean",
+                moving_variance_name=name + '_' + primitive +
+                "_mixed_bn_variance")
         ops.append(fluid.layers.elementwise_mul(op, weight[index]))
         index += 1
     out = fluid.layers.sums(ops)
@@ -66,10 +66,10 @@ def mixed_op(x, c_out, stride, index, reduction, name):
 
 def cell(s0, s1, steps, multiplier, c_out, reduction, reduction_prev, name):
     if reduction_prev:
-        s0 = factorized_reduce(s0, c_out, False, name + "/s-2")
+        s0 = factorized_reduce(s0, c_out, False, name + "_s-2")
     else:
-        s0 = relu_conv_bn(s0, c_out, 1, 1, 0, False, name + "/s-2")
-    s1 = relu_conv_bn(s1, c_out, 1, 1, 0, False, name + '/s-1')
+        s0 = relu_conv_bn(s0, c_out, 1, 1, 0, False, name + "_s-2")
+    s1 = relu_conv_bn(s1, c_out, 1, 1, 0, False, name + '_s-1')
     state = [s0, s1]
     offset = 0
     for i in range(steps):
@@ -78,7 +78,7 @@ def cell(s0, s1, steps, multiplier, c_out, reduction, reduction_prev, name):
             stride = 2 if reduction and j < 2 else 1
             temp.append(
                 mixed_op(state[j], c_out, stride, offset + j, reduction, name +
-                         "/s" + str(offset + j)))
+                         "_s" + str(offset + j)))
         offset += len(state)
         state.append(fluid.layers.sums(temp))
     out = fluid.layers.concat(input=state[-multiplier:], axis=1)
@@ -102,19 +102,19 @@ def model(x,
         3,
         padding=1,
         param_attr=fluid.ParamAttr(
-            name=name + "/conv_0",
+            name=name + "_conv_0",
             initializer=UniformInitializer(
                 low=-k, high=k)),
         bias_attr=False)
     x = fluid.layers.batch_norm(
         x,
         param_attr=fluid.ParamAttr(
-            name=name + "/bn0_scale", initializer=ConstantInitializer(value=1)),
+            name=name + "_bn0_scale", initializer=ConstantInitializer(value=1)),
         bias_attr=fluid.ParamAttr(
-            name=name + "/bn0_offset",
+            name=name + "_bn0_offset",
             initializer=ConstantInitializer(value=0)),
-        moving_mean_name=name + "/bn0_mean",
-        moving_variance_name=name + "/bn0_variance")
+        moving_mean_name=name + "_bn0_mean",
+        moving_variance_name=name + "_bn0_variance")
     s0 = s1 = x
     reduction_prev = False
     c_curr = c_in
@@ -125,7 +125,7 @@ def model(x,
         else:
             reduction = False
         s0, s1 = s1, cell(s0, s1, steps, multiplier, c_curr, reduction,
-                          reduction_prev, name + "/l" + str(i))
+                          reduction_prev, name + "_l" + str(i))
         reduction_prev = reduction
     out = fluid.layers.pool2d(s1, pool_type='avg', global_pooling=True)
     out = fluid.layers.squeeze(out, axes=[2, 3])
@@ -133,11 +133,11 @@ def model(x,
     logits = fluid.layers.fc(out,
                              num_classes,
                              param_attr=fluid.ParamAttr(
-                                 name=name + "/fc_weights",
+                                 name=name + "_fc_weights",
                                  initializer=UniformInitializer(
                                      low=-k, high=k)),
                              bias_attr=fluid.ParamAttr(
-                                 name=name + "/fc_bias",
+                                 name=name + "_fc_bias",
                                  initializer=UniformInitializer(
                                      low=-k, high=k)))
     train_loss = fluid.layers.reduce_mean(

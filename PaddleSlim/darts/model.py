@@ -36,17 +36,17 @@ def conv_bn(x, c_out, kernel_size, padding, stride, name):
         stride=stride,
         padding=padding,
         param_attr=fluid.ParamAttr(
-            name=name + "/conv", initializer=UniformInitializer(
+            name=name + "_conv", initializer=UniformInitializer(
                 low=-k, high=k)),
         bias_attr=False)
     bn1 = fluid.layers.batch_norm(
         conv1,
         param_attr=fluid.ParamAttr(
-            name=name + "/bn_scale", initializer=ConstantInitializer(value=1)),
+            name=name + "_bn_scale", initializer=ConstantInitializer(value=1)),
         bias_attr=fluid.ParamAttr(
-            name=name + "/bn_offset", initializer=ConstantInitializer(value=0)),
-        moving_mean_name=name + "/bn_mean",
-        moving_variance_name=name + "/bn_variance")
+            name=name + "_bn_offset", initializer=ConstantInitializer(value=0)),
+        moving_mean_name=name + "_bn_mean",
+        moving_variance_name=name + "_bn_variance")
     return bn1
 
 
@@ -57,11 +57,11 @@ def classifier(x, num_classes, name):
     out = fluid.layers.fc(out,
                           num_classes,
                           param_attr=fluid.ParamAttr(
-                              name=name + "/fc_weights",
+                              name=name + "_fc_weights",
                               initializer=UniformInitializer(
                                   low=-k, high=k)),
                           bias_attr=fluid.ParamAttr(
-                              name=name + "/fc_bias",
+                              name=name + "_fc_bias",
                               initializer=UniformInitializer(
                                   low=-k, high=k)))
     return out
@@ -85,19 +85,19 @@ def cell(s0, s1, is_train, genotype, c_curr, reduction, reduction_prev,
     multiplier = len(concat)
 
     if reduction_prev:
-        s0 = factorized_reduce(s0, c_curr, name=name + '/s-2')
+        s0 = factorized_reduce(s0, c_curr, name=name + '_s-2')
     else:
-        s0 = relu_conv_bn(s0, c_curr, 1, 1, 0, name=name + '/s-2')
-    s1 = relu_conv_bn(s1, c_curr, 1, 1, 0, name=name + '/s-1')
+        s0 = relu_conv_bn(s0, c_curr, 1, 1, 0, name=name + '_s-2')
+    s1 = relu_conv_bn(s1, c_curr, 1, 1, 0, name=name + '_s-1')
 
     state = [s0, s1]
     for i in range(num_cells):
         stride = 2 if reduction and indices[2 * i] < 2 else 1
         h1 = OPS[op_names[2 * i]](state[indices[2 * i]], c_curr, stride, True,
-                                  name + "/s" + str(i) + "/h1")
+                                  name + "_s" + str(i) + "_h1")
         stride = 2 if reduction and indices[2 * i + 1] < 2 else 1
         h2 = OPS[op_names[2 * i + 1]](state[indices[2 * i + 1]], c_curr, stride,
-                                      True, name + "/s" + str(i) + "/h2")
+                                      True, name + "_s" + str(i) + "_h2")
         if is_train and do_drop_path:
             if op_names[2 * i] is not 'skip_connect':
                 h1 = drop_path(h1, drop_prob, drop_path_cell[:, i, 0], args)
@@ -118,7 +118,7 @@ def auxiliary_cifar(x, num_classes, name):
         kernel_size=1,
         padding=0,
         stride=1,
-        name=name + '/conv_bn1')
+        name=name + '_conv_bn1')
     conv1 = fluid.layers.relu(conv1)
     conv2 = conv_bn(
         x=conv1,
@@ -126,7 +126,7 @@ def auxiliary_cifar(x, num_classes, name):
         kernel_size=2,
         padding=0,
         stride=1,
-        name=name + '/conv_bn2')
+        name=name + '_conv_bn2')
     conv2 = fluid.layers.relu(conv2)
     out = classifier(conv2, num_classes, name)
     return out
@@ -142,7 +142,7 @@ def network_cifar(x, is_train, c_in, num_classes, layers, auxiliary, genotype,
         kernel_size=3,
         padding=1,
         stride=1,
-        name=name + '/s0/conv_bn')
+        name=name + '_s0_conv_bn')
     s0 = s1 = x
     reduction_prev = False
     logits_aux = None
@@ -159,12 +159,12 @@ def network_cifar(x, is_train, c_in, num_classes, layers, auxiliary, genotype,
             drop_path_cell = drop_path_mask
         s0, s1 = s1, cell(s0, s1, is_train, genotype, c_curr, reduction,
                           reduction_prev, do_drop_path, drop_prob,
-                          drop_path_cell, args, name + "/l" + str(i))
+                          drop_path_cell, args, name + "_l" + str(i))
         reduction_prev = reduction
         if i == 2 * layers // 3:
             if auxiliary and is_train:
                 logits_aux = auxiliary_cifar(s1, num_classes,
-                                             name + "/l" + str(i) + "/aux")
+                                             name + "_l" + str(i) + "_aux")
 
     logits = classifier(s1, num_classes, name)
     return logits, logits_aux
@@ -180,7 +180,7 @@ def auxiliary_imagenet(x, num_classes, name):
         kernel_size=1,
         padding=0,
         stride=1,
-        name=name + '/conv_bn1')
+        name=name + '_conv_bn1')
     conv1 = fluid.layers.relu(conv1)
     conv2 = conv_bn(
         x=conv1,
@@ -188,7 +188,7 @@ def auxiliary_imagenet(x, num_classes, name):
         kernel_size=2,
         padding=0,
         stride=1,
-        name=name + '/conv_bn2')
+        name=name + '_conv_bn2')
     conv2 = fluid.layers.relu(conv2)
     out = classifier(conv2, num_classes, name)
     return out
@@ -202,7 +202,7 @@ def network_imagenet(x, is_train, c_in, num_classes, layers, auxiliary,
         kernel_size=3,
         padding=1,
         stride=2,
-        name=name + '/conv_bn/s0_0')
+        name=name + '_conv_bn_s0_0')
     x = fluid.layers.relu(x)
     s0 = conv_bn(
         x=x,
@@ -210,7 +210,7 @@ def network_imagenet(x, is_train, c_in, num_classes, layers, auxiliary,
         kernel_size=3,
         padding=1,
         stride=2,
-        name=name + '/conv_bn/s0_1')
+        name=name + '_conv_bn_s0_1')
     s1 = fluid.layers.relu(s0)
     s1 = conv_bn(
         x=s1,
@@ -218,7 +218,7 @@ def network_imagenet(x, is_train, c_in, num_classes, layers, auxiliary,
         kernel_size=3,
         padding=1,
         stride=2,
-        name=name + '/conv_bn/s1')
+        name=name + '_conv_bn_s1')
     reduction_prev = True
     logits_aux = None
     c_curr = c_in
@@ -230,12 +230,12 @@ def network_imagenet(x, is_train, c_in, num_classes, layers, auxiliary,
             reduction = False
         s0, s1 = s1, cell(s0, s1, is_train, genotype, c_curr, reduction,
                           reduction_prev, False, '', '', args,
-                          name + "/l" + str(i))
+                          name + "_l" + str(i))
         reduction_prev = reduction
         if i == 2 * layers // 3:
             if auxiliary and is_train:
                 logits_aux = auxiliary_imagenet(s1, num_classes,
-                                                name + "/l" + str(i) + "/aux")
+                                                name + "_l" + str(i) + "_aux")
 
     logits = classifier(s1, num_classes, name)
     return logits, logits_aux
