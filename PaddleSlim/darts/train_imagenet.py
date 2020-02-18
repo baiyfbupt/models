@@ -123,7 +123,6 @@ def build_program(main_prog, startup_prog, is_train, args):
                 layers=args.layers,
                 auxiliary=args.auxiliary,
                 genotype=genotype,
-                args=args,
                 name='model')
             top1 = fluid.layers.accuracy(input=logits, label=label, k=1)
             top5 = fluid.layers.accuracy(input=logits, label=label, k=5)

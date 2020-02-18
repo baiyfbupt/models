@@ -127,7 +127,6 @@ def build_program(main_prog, startup_prog, is_train, args):
                 do_drop_path=do_drop_path,
                 drop_prob=drop_path_prob,
                 drop_path_mask=drop_path_mask,
-                args=args,
                 name='model')
             top1 = fluid.layers.accuracy(input=logits, label=label, k=1)
             top5 = fluid.layers.accuracy(input=logits, label=label, k=5)

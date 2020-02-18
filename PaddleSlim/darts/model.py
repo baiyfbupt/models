@@ -67,14 +67,14 @@ def classifier(x, num_classes, name):
     return out
 
 
-def drop_path(x, drop_prob, mask, args):
+def drop_path(x, drop_prob, mask):
     keep_prob = 1 - drop_prob[0]
     x = fluid.layers.elementwise_mul(x / keep_prob, mask, axis=0)
     return x
 
 
 def cell(s0, s1, is_train, genotype, c_curr, reduction, reduction_prev,
-         do_drop_path, drop_prob, drop_path_cell, args, name):
+         do_drop_path, drop_prob, drop_path_cell, name):
     if reduction:
         op_names, indices = zip(*genotype.reduce)
         concat = genotype.reduce_concat
@@ -100,9 +100,9 @@ def cell(s0, s1, is_train, genotype, c_curr, reduction, reduction_prev,
                                       True, name + "_s" + str(i) + "_h2")
         if is_train and do_drop_path:
             if op_names[2 * i] is not 'skip_connect':
-                h1 = drop_path(h1, drop_prob, drop_path_cell[:, i, 0], args)
+                h1 = drop_path(h1, drop_prob, drop_path_cell[:, i, 0])
             if op_names[2 * i + 1] is not 'skip_connect':
-                h2 = drop_path(h2, drop_prob, drop_path_cell[:, i, 1], args)
+                h2 = drop_path(h2, drop_prob, drop_path_cell[:, i, 1])
         state.append(h1 + h2)
     out = fluid.layers.concat(input=state[-multiplier:], axis=1)
     return out
@@ -133,7 +133,7 @@ def auxiliary_cifar(x, num_classes, name):
 
 
 def network_cifar(x, is_train, c_in, num_classes, layers, auxiliary, genotype,
-                  do_drop_path, drop_prob, drop_path_mask, args, name):
+                  do_drop_path, drop_prob, drop_path_mask, name):
     stem_multiplier = 3
     c_curr = stem_multiplier * c_in
     x = conv_bn(
@@ -159,7 +159,7 @@ def network_cifar(x, is_train, c_in, num_classes, layers, auxiliary, genotype,
             drop_path_cell = drop_path_mask
         s0, s1 = s1, cell(s0, s1, is_train, genotype, c_curr, reduction,
                           reduction_prev, do_drop_path, drop_prob,
-                          drop_path_cell, args, name + "_l" + str(i))
+                          drop_path_cell, name + "_l" + str(i))
         reduction_prev = reduction
         if i == 2 * layers // 3:
             if auxiliary and is_train:
@@ -195,7 +195,7 @@ def auxiliary_imagenet(x, num_classes, name):
 
 
 def network_imagenet(x, is_train, c_in, num_classes, layers, auxiliary,
-                     genotype, args, name):
+                     genotype, name):
     x = conv_bn(
         x=x,
         c_out=c_in // 2,
@@ -229,8 +229,7 @@ def network_imagenet(x, is_train, c_in, num_classes, layers, auxiliary,
         else:
             reduction = False
         s0, s1 = s1, cell(s0, s1, is_train, genotype, c_curr, reduction,
-                          reduction_prev, False, '', '', args,
-                          name + "_l" + str(i))
+                          reduction_prev, False, '', '', name + "_l" + str(i))
         reduction_prev = reduction
         if i == 2 * layers // 3:
             if auxiliary and is_train:
